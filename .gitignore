@@ -1,0 +1,36 @@
+# --- Sensitive data: NEVER commit these ---
+portfolio.db
+portfolio.db-journal
+portfolio.db-wal
+portfolio.db-shm
+raw_data_exports/
+
+# --- Python ---
+__pycache__/
+*.pyc
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# --- Virtual environment ---
+venv/
+.venv/
+env/
+
+# --- Editor / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- Claude Code session-local state (keep launch.json shared) ---
+.claude/settings.local.json
+.claude/worktrees/
+
+# --- Test/temp exports generated locally ---
+static/portfolio_export_test.html
+*.tmp
+
+# --- Local env files (production env lives in /etc/portfolio.env on the Pi) ---
+.env
+.env.local

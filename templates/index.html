@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Portfolio Tracker</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-treemap@2"></script>
+    <style>
+        .card-value { font-size: 1.6rem; font-weight: 700; }
+        .card-label { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--bs-secondary-color); }
+        .card-change { font-size: 0.85rem; margin-top: 0.15rem; }
+        .text-positive { color: #198754; }
+        .text-negative { color: #dc3545; }
+        .badge-ike { background: #198754; }
+        .badge-ikem { background: #0d6efd; }
+        .badge-ikze { background: #fd7e14; }
+        .chart-container { position: relative; min-height: 300px; }
+        .treemap-container { position: relative; min-height: 350px; }
+        .table .num { text-align: right; font-variant-numeric: tabular-nums; }
+        #loading { text-align: center; padding: 4rem 0; }
+
+        /* Breakdown table */
+        .breakdown-table { font-size: 0.85rem; }
+        .breakdown-table th { cursor: pointer; user-select: none; white-space: nowrap; }
+        .breakdown-table th .sort-arrow { opacity: 0.3; font-size: 0.7rem; }
+        .breakdown-table th.sort-active .sort-arrow { opacity: 1; }
+        .breakdown-table td, .breakdown-table th { padding: 0.4rem 0.6rem; }
+
+        /* Sticky first two columns */
+        .breakdown-table thead th:nth-child(1),
+        .breakdown-table thead th:nth-child(2),
+        .breakdown-table tbody td:nth-child(1),
+        .breakdown-table tbody td:nth-child(2),
+        .breakdown-table tfoot td:nth-child(1),
+        .breakdown-table tfoot td:nth-child(2) {
+            position: sticky;
+            z-index: 1;
+            background: inherit;
+        }
+        .breakdown-table thead th:nth-child(1),
+        .breakdown-table thead th:nth-child(2) {
+            z-index: 2;
+        }
+        .breakdown-table th:nth-child(1),
+        .breakdown-table td:nth-child(1) { left: 0; min-width: 140px; }
+        .breakdown-table th:nth-child(2),
+        .breakdown-table td:nth-child(2) { left: 140px; min-width: 150px; }
+
+        /* Group row backgrounds for sticky to work */
+        .breakdown-table tbody tr { background: var(--bs-body-bg); }
+        .breakdown-table thead tr { background: var(--bs-tertiary-bg); }
+        .breakdown-table tfoot tr { background: var(--bs-tertiary-bg); }
+        .ticker-row td { background: var(--bs-tertiary-bg) !important; }
+
+        /* Accordion: group rows */
+        .group-row { cursor: pointer; }
+        .group-row:hover { background: var(--bs-tertiary-bg) !important; }
+        .group-row td:first-child::before {
+            content: '\25B6';
+            display: inline-block;
+            font-size: 0.6rem;
+            margin-right: 0.4rem;
+            transition: transform 0.15s;
+        }
+        .group-row.expanded td:first-child::before { transform: rotate(90deg); }
+
+        /* Accordion: ticker rows */
+        .ticker-row { display: none; }
+        .ticker-row.visible { display: table-row; }
+        .ticker-row td { color: var(--bs-secondary-color); }
+        .ticker-row td:first-child { padding-left: 1.8rem; }
+
+        /* Change column */
+        .col-change { white-space: nowrap; font-size: 0.8rem; }
+    </style>
+</head>
+<body>
+
+<!-- Header -->
+<nav class="navbar navbar-dark bg-dark mb-4">
+    <div class="container">
+        <span class="navbar-brand mb-0 h1">Portfolio Tracker</span>
+        <div class="d-flex align-items-center gap-2">
+            <a href="/" class="btn btn-sm btn-outline-light">Dashboard</a>
+            <a href="/compare" class="btn btn-sm btn-outline-light">Compare</a>
+            <button class="btn btn-sm btn-outline-light" id="themeToggle" onclick="toggleTheme()">Dark</button>
+        </div>
+    </div>
+</nav>
+
+<div class="container" id="app">
+    <div id="loading">Loading dashboard...</div>
+</div>
+
+<!-- Main dashboard (hidden until data loads) -->
+<template id="dashboard-template">
+<div class="container">
+
+    <!-- Summary Cards -->
+    <div class="row g-3 mb-4" id="summary-cards"></div>
+
+    <!-- Timeline Chart -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <h5 class="card-title">Total Value Over Time</h5>
+            <div class="chart-container">
+                <canvas id="chartTimeline"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Breakdown Table -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h5 class="card-title mb-0">Breakdown</h5>
+                <div class="d-flex gap-2">
+                    <button class="btn btn-outline-secondary btn-sm" onclick="exportCSV()">Export CSV</button>
+                    <a href="/api/export-html" class="btn btn-outline-primary btn-sm">Export HTML</a>
+                </div>
+            </div>
+
+            <!-- Filters -->
+            <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
+                <label class="form-label mb-0 small fw-semibold">Quarters:</label>
+                <select id="filterFrom" class="form-select form-select-sm" style="width: auto;"></select>
+                <span class="small">to</span>
+                <select id="filterTo" class="form-select form-select-sm" style="width: auto;"></select>
+                <span class="small ms-3 fw-semibold">Account:</span>
+                <select id="filterAccount" class="form-select form-select-sm" style="width: auto;">
+                    <option value="">All</option>
+                    <option value="IKE">IKE only</option>
+                    <option value="IKE-M">IKE-M only</option>
+                    <option value="IKZE">IKZE only</option>
+                    <option value="RETIREMENT">All retirement (IKE + IKE-M + IKZE)</option>
+                </select>
+            </div>
+
+            <div class="table-responsive">
+                <table class="table table-sm table-hover breakdown-table mb-0">
+                    <thead class="table-light" id="breakdown-head"></thead>
+                    <tbody id="breakdown-body"></tbody>
+                    <tfoot class="table-light fw-bold" id="breakdown-footer"></tfoot>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Treemap Charts -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-6">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">Allocation by Tags</h5>
+                    <div class="treemap-container">
+                        <canvas id="chartTags"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">Allocation by Account</h5>
+                    <div class="treemap-container">
+                        <canvas id="chartAccount"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Import CSV -->
+    <div class="card mb-4">
+        <div class="card-header bg-transparent d-flex justify-content-between align-items-center"
+             style="cursor: pointer;"
+             data-bs-toggle="collapse" data-bs-target="#importCsvBody">
+            <h5 class="mb-0">Import CSV</h5>
+            <span class="text-muted small">click to expand</span>
+        </div>
+        <div class="collapse" id="importCsvBody">
+            <div class="card-body">
+                <p class="text-muted small">Upload a myFund.pl CSV export. The date is extracted from the filename (e.g. <code>myfund.pl_..._2026-03-31.csv</code>).</p>
+                <div class="d-flex align-items-end gap-2" style="max-width: 500px;">
+                    <div class="flex-grow-1">
+                        <label for="csvFileInput" class="form-label fw-semibold">CSV File</label>
+                        <input type="file" id="csvFileInput" class="form-control" accept=".csv">
+                    </div>
+                    <button type="button" class="btn btn-primary" onclick="importCsv()" id="importBtn">Import</button>
+                </div>
+                <div id="importResult" class="mt-3"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quarterly Entry (collapsed by default) -->
+    <div class="card mb-4">
+        <div class="card-header bg-transparent d-flex justify-content-between align-items-center"
+             style="cursor: pointer;"
+             data-bs-toggle="collapse" data-bs-target="#quarterlyEntryBody">
+            <h5 class="mb-0">Quarterly Entry</h5>
+            <span class="text-muted small">click to expand</span>
+        </div>
+        <div class="collapse" id="quarterlyEntryBody">
+            <div class="card-body">
+                <p class="text-muted small">Add cash balances and mortgage for a specific quarter.</p>
+
+                <div class="d-flex align-items-end gap-2 mb-3" style="max-width: 500px;">
+                    <div class="flex-grow-1">
+                        <label for="entryQuarter" class="form-label fw-semibold">Quarter</label>
+                        <select id="entryQuarter" class="form-select"></select>
+                    </div>
+                    <button type="button" class="btn btn-outline-danger btn-sm" onclick="deleteSelectedSnapshot()" style="white-space: nowrap;">Delete Quarter</button>
+                </div>
+
+                <h6>Cash Positions</h6>
+                <div id="cashEntries"></div>
+                <button type="button" class="btn btn-outline-secondary btn-sm mb-3" onclick="addCashRow()">+ Add Cash Position</button>
+
+                <h6>Mortgage</h6>
+                <div class="row g-2 mb-3" style="max-width: 500px;">
+                    <div class="col">
+                        <input type="number" step="0.01" id="mortgageAmount" class="form-control" placeholder="Remaining amount (PLN)">
+                    </div>
+                    <div class="col-auto">
+                        <input type="text" id="mortgageLabel" class="form-control" value="Mortgage" placeholder="Label">
+                    </div>
+                </div>
+
+                <button type="button" class="btn btn-primary" onclick="saveManualEntries()">Save</button>
+                <span id="saveStatus" class="ms-2 text-muted small"></span>
+            </div>
+        </div>
+    </div>
+
+</div>
+</template>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

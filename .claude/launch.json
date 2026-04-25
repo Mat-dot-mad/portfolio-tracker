@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Flask Portfolio Tracker",
+      "runtimeExecutable": "/Users/mateusz/Projects/portfolio/venv/bin/python3",
+      "runtimeArgs": ["app.py"],
+      "port": 5001
+    }
+  ]
+}

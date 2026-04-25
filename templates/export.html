@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Portfolio Tracker — Exported {{ export_date }}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-treemap@2"></script>
+    <style>
+        /* ── Dashboard styles (from index.html) ── */
+        .card-value { font-size: 1.6rem; font-weight: 700; }
+        .card-label { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--bs-secondary-color); }
+        .card-change { font-size: 0.85rem; margin-top: 0.15rem; }
+        .card-detail { font-size: 0.85rem; color: var(--bs-secondary-color); }
+        .text-positive { color: #198754; }
+        .text-negative { color: #dc3545; }
+        .text-new { color: #0d6efd; }
+        .text-sold { color: #6c757d; }
+        .badge-ike { background: #198754; }
+        .badge-ikem { background: #0d6efd; }
+        .badge-ikze { background: #fd7e14; }
+        .chart-container { position: relative; min-height: 300px; }
+        .treemap-container { position: relative; min-height: 350px; }
+        .table .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+        /* Breakdown table */
+        .breakdown-table { font-size: 0.85rem; }
+        .breakdown-table th { cursor: pointer; user-select: none; white-space: nowrap; }
+        .breakdown-table th .sort-arrow { opacity: 0.3; font-size: 0.7rem; }
+        .breakdown-table th.sort-active .sort-arrow { opacity: 1; }
+        .breakdown-table td, .breakdown-table th { padding: 0.4rem 0.6rem; }
+
+        .breakdown-table thead th:nth-child(1),
+        .breakdown-table thead th:nth-child(2),
+        .breakdown-table tbody td:nth-child(1),
+        .breakdown-table tbody td:nth-child(2),
+        .breakdown-table tfoot td:nth-child(1),
+        .breakdown-table tfoot td:nth-child(2) {
+            position: sticky;
+            z-index: 1;
+            background: inherit;
+        }
+        .breakdown-table thead th:nth-child(1),
+        .breakdown-table thead th:nth-child(2) {
+            z-index: 2;
+        }
+        .breakdown-table th:nth-child(1),
+        .breakdown-table td:nth-child(1) { left: 0; min-width: 140px; }
+        .breakdown-table th:nth-child(2),
+        .breakdown-table td:nth-child(2) { left: 140px; min-width: 150px; }
+
+        .breakdown-table tbody tr { background: var(--bs-body-bg); }
+        .breakdown-table thead tr { background: var(--bs-tertiary-bg); }
+        .breakdown-table tfoot tr { background: var(--bs-tertiary-bg); }
+        .ticker-row td { background: var(--bs-tertiary-bg) !important; }
+
+        .group-row { cursor: pointer; }
+        .group-row:hover { background: var(--bs-tertiary-bg) !important; }
+        .group-row td:first-child::before {
+            content: '\25B6';
+            display: inline-block;
+            font-size: 0.6rem;
+            margin-right: 0.4rem;
+            transition: transform 0.15s;
+        }
+        .group-row.expanded td:first-child::before { transform: rotate(90deg); }
+
+        .ticker-row { display: none; }
+        .ticker-row.visible { display: table-row; }
+        .ticker-row td { color: var(--bs-secondary-color); }
+        .ticker-row td:first-child { padding-left: 1.8rem; }
+
+        .col-change { white-space: nowrap; font-size: 0.8rem; }
+
+        /* ── Compare table styles (from compare.html) ── */
+        .diff-table { font-size: 0.85rem; }
+        .diff-table td, .diff-table th { padding: 0.4rem 0.6rem; }
+        .diff-table th { cursor: pointer; user-select: none; white-space: nowrap; }
+        .diff-table th .sort-arrow { opacity: 0.3; font-size: 0.7rem; }
+        .diff-table th.sort-active .sort-arrow { opacity: 1; }
+
+        .section-label {
+            font-size: 0.75rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding: 0.5rem 0.6rem;
+            background: var(--bs-tertiary-bg);
+        }
+    </style>
+</head>
+<body>
+
+<!-- Header with view toggle -->
+<nav class="navbar navbar-dark bg-dark mb-4">
+    <div class="container">
+        <span class="navbar-brand mb-0 h1">Portfolio Tracker <small class="text-muted ms-2" style="font-size: 0.7rem;">Exported {{ export_date }}</small></span>
+        <div class="d-flex align-items-center gap-2">
+            <button id="navDashboard" class="btn btn-sm btn-outline-light">Dashboard</button>
+            <button id="navCompare" class="btn btn-sm btn-outline-light">Compare</button>
+            <button class="btn btn-sm btn-outline-light" id="themeToggle" onclick="toggleTheme()">Dark</button>
+        </div>
+    </div>
+</nav>
+
+<!-- Dashboard view container -->
+<div class="container" id="dashboard-app"></div>
+
+<!-- Compare view container -->
+<div class="container" id="compare-app" style="display:none;"></div>
+
+<!-- Dashboard template (cloned into dashboard-app on init) -->
+<template id="dashboard-template">
+<div>
+    <!-- Summary Cards -->
+    <div class="row g-3 mb-4" id="summary-cards"></div>
+
+    <!-- Timeline Chart -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <h5 class="card-title">Total Value Over Time</h5>
+            <div class="chart-container">
+                <canvas id="chartTimeline"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Breakdown Table -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h5 class="card-title mb-0">Breakdown</h5>
+                <button class="btn btn-outline-secondary btn-sm" onclick="exportCSV()">Export CSV</button>
+            </div>
+
+            <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
+                <label class="form-label mb-0 small fw-semibold">Quarters:</label>
+                <select id="filterFrom" class="form-select form-select-sm" style="width: auto;"></select>
+                <span class="small">to</span>
+                <select id="filterTo" class="form-select form-select-sm" style="width: auto;"></select>
+                <span class="small ms-3 fw-semibold">Account:</span>
+                <select id="filterAccount" class="form-select form-select-sm" style="width: auto;">
+                    <option value="">All</option>
+                    <option value="IKE">IKE only</option>
+                    <option value="IKE-M">IKE-M only</option>
+                    <option value="IKZE">IKZE only</option>
+                    <option value="RETIREMENT">All retirement (IKE + IKE-M + IKZE)</option>
+                </select>
+            </div>
+
+            <div class="table-responsive">
+                <table class="table table-sm table-hover breakdown-table mb-0">
+                    <thead class="table-light" id="breakdown-head"></thead>
+                    <tbody id="breakdown-body"></tbody>
+                    <tfoot class="table-light fw-bold" id="breakdown-footer"></tfoot>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Treemap Charts -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-6">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">Allocation by Tags</h5>
+                    <div class="treemap-container">
+                        <canvas id="chartTags"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">Allocation by Account</h5>
+                    <div class="treemap-container">
+                        <canvas id="chartAccount"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+</template>
+
+<!-- Compare template (cloned into compare-app on first Compare view click) -->
+<template id="compare-template">
+<div>
+    <h4 class="mb-3">Quarterly Comparison</h4>
+
+    <div class="d-flex align-items-center gap-2 mb-4 flex-wrap">
+        <label class="form-label mb-0 fw-semibold">Compare</label>
+        <select id="selectA" class="form-select form-select-sm" style="width: auto;"></select>
+        <span>with</span>
+        <select id="selectB" class="form-select form-select-sm" style="width: auto;"></select>
+    </div>
+
+    <div class="row g-3 mb-4" id="compare-cards"></div>
+
+    <div class="card mb-4">
+        <div class="card-body">
+            <h5 class="card-title">Positions Diff</h5>
+            <div class="table-responsive">
+                <table class="table table-sm table-hover diff-table mb-0">
+                    <thead class="table-light" id="diff-head"></thead>
+                    <tbody id="diff-body"></tbody>
+                    <tfoot class="table-light fw-bold" id="diff-footer"></tfoot>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+</template>
+
+<!-- Embedded data + scripts -->
+<script>
+window.STATIC_EXPORT = true;
+// Stored on a unique name to avoid colliding with `let dashboardData` in app.js.
+// The init script below will assign this into the actual binding once app.js loads.
+window.__embeddedDashboardData = {{ dashboard_json | safe }};
+</script>
+
+<!-- Inlined app.js (loadDashboard call commented out by Flask route) -->
+<script>
+{{ app_js | safe }}
+</script>
+
+<!-- Inlined compare.js (loadCompare call commented out by Flask route) -->
+<script>
+{{ compare_js | safe }}
+</script>
+
+<!-- Static-export init: render dashboard, wire view toggle, lazy-init compare -->
+<script>
+(function() {
+    // Assign embedded data into app.js's `dashboardData` binding (declared as
+    // `let dashboardData = null;` in app.js — we couldn't set it directly from
+    // the earlier inline script because `var dashboardData` would collide with
+    // that `let` declaration and cause a SyntaxError that kills all of app.js).
+    dashboardData = window.__embeddedDashboardData;
+
+    // Theme toggle button text
+    const theme = document.documentElement.getAttribute('data-bs-theme');
+    const tbtn = document.getElementById('themeToggle');
+    if (tbtn) tbtn.textContent = theme === 'dark' ? 'Light' : 'Dark';
+
+    // Clone dashboard template into dashboard-app
+    const dashApp = document.getElementById('dashboard-app');
+    const dashTpl = document.getElementById('dashboard-template');
+    dashApp.appendChild(dashTpl.content.cloneNode(true));
+
+    // Render dashboard (using inlined functions from app.js)
+    renderSummaryCards();
+    renderTimelineChart();
+    initBreakdownTable();
+    renderTreemap('chartTags', dashboardData.by_tags, 'Tags');
+    renderTreemap('chartAccount', dashboardData.by_account, 'Account');
+
+    // ── View toggle ──
+    let compareInitialized = false;
+
+    function showView(view) {
+        document.getElementById('dashboard-app').style.display = view === 'dashboard' ? '' : 'none';
+        document.getElementById('compare-app').style.display = view === 'compare' ? '' : 'none';
+        document.getElementById('navDashboard').classList.toggle('active', view === 'dashboard');
+        document.getElementById('navCompare').classList.toggle('active', view === 'compare');
+
+        if (view === 'compare' && !compareInitialized) {
+            initCompareView();
+            compareInitialized = true;
+        }
+    }
+
+    function initCompareView() {
+        // Clone compare template into compare-app
+        const compApp = document.getElementById('compare-app');
+        const compTpl = document.getElementById('compare-template');
+        compApp.appendChild(compTpl.content.cloneNode(true));
+
+        // Default to last two quarters
+        const quarters = dashboardData.quarters;
+        if (quarters.length === 0) {
+            compApp.innerHTML = '<p class="text-muted">No snapshots available to compare.</p>';
+            return;
+        }
+        const idA = quarters.length >= 2 ? quarters[quarters.length - 2].id : quarters[0].id;
+        const idB = quarters[quarters.length - 1].id;
+
+        loadCompareStatic(idA, idB);
+    }
+
+    // Replaces compare.js's fetch-based loadCompare() — builds compareData from
+    // the embedded dashboardData and renders the cards/diff table.
+    window.loadCompareStatic = function(idA, idB) {
+        const snapA = dashboardData.snapshots.find(s => s.id === idA);
+        const snapB = dashboardData.snapshots.find(s => s.id === idB);
+        const positionsA = dashboardData.all_positions[idA] || [];
+        const positionsB = dashboardData.all_positions[idB] || [];
+
+        // Use the timeline (already aggregated server-side) for cash/mortgage totals
+        const tlA = dashboardData.timeline.find(t => t.id === idA) || {};
+        const tlB = dashboardData.timeline.find(t => t.id === idB) || {};
+
+        const portfolioA = positionsA.reduce((s, p) => s + p.value_pln, 0);
+        const portfolioB = positionsB.reduce((s, p) => s + p.value_pln, 0);
+        const cashA = tlA.cash_total || 0;
+        const cashB = tlB.cash_total || 0;
+        const mortgageA = tlA.mortgage_total || 0;
+        const mortgageB = tlB.mortgage_total || 0;
+
+        // Set the global compareData (declared as `let` at top of compare.js,
+        // accessible to this script since both are classic <script> tags)
+        compareData = {
+            snapshot_a: snapA,
+            snapshot_b: snapB,
+            positions_a: positionsA,
+            positions_b: positionsB,
+            totals: {
+                portfolio: [portfolioA, portfolioB],
+                cash: [cashA, cashB],
+                mortgage: [mortgageA, mortgageB],
+                net_worth: [
+                    portfolioA + cashA - mortgageA,
+                    portfolioB + cashB - mortgageB,
+                ],
+            },
+            // Quarter selectors expect snapshot_date — use full snapshots in ASC order
+            quarters: dashboardData.snapshots.slice().reverse(),
+        };
+
+        // First load: build the selectors
+        const selectA = document.getElementById('selectA');
+        if (!selectA.dataset.inited) {
+            const opts = compareData.quarters.map(q =>
+                `<option value="${q.id}">${q.quarter} (${q.snapshot_date})</option>`
+            ).join('');
+            selectA.innerHTML = opts;
+            document.getElementById('selectB').innerHTML = opts;
+            selectA.value = idA;
+            document.getElementById('selectB').value = idB;
+
+            const onChange = () => {
+                expandedGroups.clear();
+                loadCompareStatic(
+                    parseInt(selectA.value),
+                    parseInt(document.getElementById('selectB').value)
+                );
+            };
+            selectA.addEventListener('change', onChange);
+            document.getElementById('selectB').addEventListener('change', onChange);
+            selectA.dataset.inited = '1';
+        }
+
+        renderCards();
+        renderDiffTable();
+    };
+
+    // Wire up nav buttons
+    document.getElementById('navDashboard').addEventListener('click', () => showView('dashboard'));
+    document.getElementById('navCompare').addEventListener('click', () => showView('compare'));
+
+    showView('dashboard');
+})();
+</script>
+
+</body>
+</html>
