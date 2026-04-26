@@ -29,7 +29,7 @@ Tailscale, backed up daily to Google Drive.
 ## Local development
 
 ```bash
-cd /Users/mateusz/Projects/portfolio
+cd <repo-path>
 source venv/bin/activate
 python3 app.py                  # Flask dev server on http://127.0.0.1:5001 (no auth)
 ```
@@ -43,7 +43,7 @@ DATABASE_PATH=./portfolio.db DASHBOARD_PASSWORD=test SECRET_KEY=dev-key \
 
 ## Production (Raspberry Pi)
 
-Runs as a systemd service on `mat-pi`, reachable via Tailscale at `http://mat-pi:5001`.
+Runs as a systemd service on the Pi, reachable via Tailscale at `http://<your-pi-hostname>:5001`.
 
 | Component | Path |
 |---|---|
@@ -140,4 +140,4 @@ sudo systemctl restart portfolio
 
 UFW allows traffic only on the `tailscale0` interface plus SSH. The dashboard is
 reachable from any device logged into the same tailnet at
-`http://mat-pi:5001`. The port is **not** exposed to the public internet.
+`http://<your-pi-hostname>:5001`. The port is **not** exposed to the public internet.
