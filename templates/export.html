@@ -151,9 +151,9 @@
 
             <div class="table-responsive">
                 <table class="table table-sm table-hover breakdown-table mb-0">
-                    <thead class="table-light" id="breakdown-head"></thead>
+                    <thead id="breakdown-head"></thead>
                     <tbody id="breakdown-body"></tbody>
-                    <tfoot class="table-light fw-bold" id="breakdown-footer"></tfoot>
+                    <tfoot class="fw-bold" id="breakdown-footer"></tfoot>
                 </table>
             </div>
         </div>
@@ -204,10 +204,31 @@
             <h5 class="card-title">Positions Diff</h5>
             <div class="table-responsive">
                 <table class="table table-sm table-hover diff-table mb-0">
-                    <thead class="table-light" id="diff-head"></thead>
+                    <thead id="diff-head"></thead>
                     <tbody id="diff-body"></tbody>
-                    <tfoot class="table-light fw-bold" id="diff-footer"></tfoot>
+                    <tfoot class="fw-bold" id="diff-footer"></tfoot>
                 </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Change by Tag (horizontal bar chart) -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <h5 class="card-title">Change by Tag</h5>
+            <div class="chart-container">
+                <canvas id="tag-delta-chart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Net Worth Bridge (waterfall) -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <h5 class="card-title">Net Worth Bridge</h5>
+            <div class="text-muted mb-3" id="waterfall-summary" style="font-size: 0.9rem;"></div>
+            <div class="chart-container">
+                <canvas id="waterfall-chart"></canvas>
             </div>
         </div>
     </div>
@@ -355,6 +376,8 @@ window.__embeddedDashboardData = {{ dashboard_json | safe }};
 
         renderCards();
         renderDiffTable();
+        renderTagDeltaChart();
+        renderWaterfallChart();
     };
 
     // Wire up nav buttons

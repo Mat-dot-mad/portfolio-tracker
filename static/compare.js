@@ -63,6 +63,12 @@ let sortCol = 'change';
 let sortAsc = false;
 let expandedGroups = new Set();
 
+// Chart instances — kept so we can destroy them before re-rendering when
+// the user changes the selected quarters. Otherwise Chart.js leaks canvases
+// and tooltips from the old chart linger.
+let tagDeltaChart = null;
+let waterfallChart = null;
+
 // ── Load & Render ───────────────────────────────────
 
 async function loadCompare(idA, idB) {
@@ -86,6 +92,8 @@ async function loadCompare(idA, idB) {
 
     renderCards();
     renderDiffTable();
+    renderTagDeltaChart();
+    renderWaterfallChart();
 }
 
 function initSelectors() {
@@ -327,6 +335,214 @@ function renderDiffTable() {
                 tr.classList.toggle('visible');
             });
         });
+    });
+}
+
+// ── Tag Delta Bar Chart ─────────────────────────────
+
+function buildTagDeltas() {
+    const aggA = {};
+    const aggB = {};
+    for (const p of compareData.positions_a) {
+        const tag = p.tags || 'Other';
+        aggA[tag] = (aggA[tag] || 0) + p.value_pln;
+    }
+    for (const p of compareData.positions_b) {
+        const tag = p.tags || 'Other';
+        aggB[tag] = (aggB[tag] || 0) + p.value_pln;
+    }
+    const allTags = new Set([...Object.keys(aggA), ...Object.keys(aggB)]);
+    const deltas = [];
+    for (const tag of allTags) {
+        const valA = aggA[tag] || 0;
+        const valB = aggB[tag] || 0;
+        const change = valB - valA;
+        if (change !== 0) deltas.push({ tag, valA, valB, change });
+    }
+    // Sort by absolute change descending — biggest movers first (top of horizontal chart)
+    deltas.sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
+    return deltas;
+}
+
+function renderTagDeltaChart() {
+    const canvas = document.getElementById('tag-delta-chart');
+    if (!canvas) return;
+    if (tagDeltaChart) tagDeltaChart.destroy();
+
+    const data = buildTagDeltas();
+    if (!data.length) {
+        // No movement at all — leave the canvas blank rather than showing an empty axis
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        return;
+    }
+
+    tagDeltaChart = new Chart(canvas, {
+        type: 'bar',
+        data: {
+            labels: data.map(d => d.tag),
+            datasets: [{
+                label: 'Change (PLN)',
+                data: data.map(d => d.change),
+                backgroundColor: data.map(d =>
+                    d.change >= 0 ? 'rgba(25, 135, 84, 0.7)' : 'rgba(220, 53, 69, 0.7)'),
+                borderColor: data.map(d => d.change >= 0 ? '#198754' : '#dc3545'),
+                borderWidth: 1,
+            }],
+        },
+        options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: function(ctx) {
+                            const d = data[ctx.dataIndex];
+                            const sign = d.change >= 0 ? '+' : '';
+                            const pct = d.valA > 0
+                                ? ` (${sign}${(d.change / d.valA * 100).toFixed(1)}%)`
+                                : '';
+                            return [
+                                `Change: ${sign}${formatPLN(d.change)}${pct}`,
+                                `From: ${formatPLN(d.valA)}`,
+                                `To: ${formatPLN(d.valB)}`,
+                            ];
+                        },
+                    },
+                },
+            },
+            scales: {
+                x: { ticks: { callback: v => formatPLN(v) } },
+            },
+        },
+    });
+}
+
+// ── Waterfall (Net Worth Bridge) ────────────────────
+
+function buildWaterfallStops() {
+    const t = compareData.totals;
+    const portfolioChange = t.portfolio[1] - t.portfolio[0];
+    const cashChange = t.cash[1] - t.cash[0];
+    const mortgageChange = t.mortgage[1] - t.mortgage[0];
+    const netWorthA = t.net_worth[0];
+
+    // Each stop is a Chart.js floating bar [low, high]. The bars form a staircase
+    // from netWorthA to netWorthB, one step per category. Start/end totals live in
+    // the subtitle text rather than as full bars (the deltas are usually so small
+    // relative to net worth that full-bar totals would dominate the chart).
+    const stops = [];
+    let running = netWorthA;
+
+    // Portfolio change
+    let next = running + portfolioChange;
+    stops.push({
+        label: 'Portfolio',
+        range: [Math.min(running, next), Math.max(running, next)],
+        type: portfolioChange >= 0 ? 'positive' : 'negative',
+        delta: portfolioChange,
+    });
+    running = next;
+
+    // Cash change
+    next = running + cashChange;
+    stops.push({
+        label: 'Cash',
+        range: [Math.min(running, next), Math.max(running, next)],
+        type: cashChange >= 0 ? 'positive' : 'negative',
+        delta: cashChange,
+    });
+    running = next;
+
+    // Mortgage impact (mortgage is SUBTRACTED from net worth — a positive
+    // mortgage change reduces net worth, so we negate the delta sign here)
+    next = running - mortgageChange;
+    stops.push({
+        label: 'Mortgage',
+        range: [Math.min(running, next), Math.max(running, next)],
+        type: -mortgageChange >= 0 ? 'positive' : 'negative',
+        delta: -mortgageChange,
+    });
+
+    return stops;
+}
+
+function renderWaterfallChart() {
+    const canvas = document.getElementById('waterfall-chart');
+    if (!canvas) return;
+    if (waterfallChart) waterfallChart.destroy();
+
+    // Populate the subtitle with start → end net worth (since the chart no longer
+    // shows them as full bars).
+    const summaryEl = document.getElementById('waterfall-summary');
+    if (summaryEl) {
+        const t = compareData.totals;
+        const nwA = t.net_worth[0];
+        const nwB = t.net_worth[1];
+        const totalDelta = nwB - nwA;
+        const sign = totalDelta >= 0 ? '+' : '';
+        const pct = nwA !== 0 ? ` (${sign}${(totalDelta / Math.abs(nwA) * 100).toFixed(1)}%)` : '';
+        const cls = totalDelta >= 0 ? 'text-positive' : 'text-negative';
+        const qA = compareData.snapshot_a.quarter;
+        const qB = compareData.snapshot_b.quarter;
+        summaryEl.innerHTML =
+            `Net Worth ${qA}: <strong>${formatPLN(nwA)}</strong> ` +
+            `→ ${qB}: <strong>${formatPLN(nwB)}</strong> ` +
+            `<span class="${cls}">${sign}${formatPLN(totalDelta)}${pct}</span>`;
+    }
+
+    const stops = buildWaterfallStops();
+
+    waterfallChart = new Chart(canvas, {
+        type: 'bar',
+        data: {
+            labels: stops.map(s => s.label),
+            datasets: [{
+                label: 'Net Worth Bridge',
+                data: stops.map(s => s.range),  // floating bars: [start, end]
+                backgroundColor: stops.map(s => {
+                    if (s.type === 'total') return 'rgba(13, 110, 253, 0.7)';
+                    if (s.type === 'positive') return 'rgba(25, 135, 84, 0.7)';
+                    return 'rgba(220, 53, 69, 0.7)';
+                }),
+                borderColor: stops.map(s => {
+                    if (s.type === 'total') return '#0d6efd';
+                    if (s.type === 'positive') return '#198754';
+                    return '#dc3545';
+                }),
+                borderWidth: 1,
+            }],
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: function(ctx) {
+                            const stop = stops[ctx.dataIndex];
+                            if (stop.type === 'total') {
+                                return formatPLN(stop.delta);
+                            }
+                            const sign = stop.delta >= 0 ? '+' : '';
+                            return `${sign}${formatPLN(stop.delta)}`;
+                        },
+                    },
+                },
+            },
+            scales: {
+                // Auto-scale tightly to the bars instead of starting at 0 — the
+                // running totals span only ~5–10% of net worth, so a 0-anchored
+                // axis would visually crush the deltas.
+                y: {
+                    beginAtZero: false,
+                    ticks: { callback: v => formatPLN(v) },
+                },
+            },
+        },
     });
 }
 
