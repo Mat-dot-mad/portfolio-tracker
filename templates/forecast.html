@@ -50,7 +50,7 @@
         <div class="card-body">
             <h5 class="card-title">Forecast Settings</h5>
             <div class="row g-3 slider-row">
-                <div class="col-md-6 col-lg-3">
+                <div class="col-lg-4 col-md-6">
                     <label for="horizon-slider" class="form-label">
                         Horizon: <span class="slider-value" id="horizon-value">8</span> quarters
                         <span class="slider-default-hint" id="horizon-years"></span>
@@ -59,31 +59,22 @@
                            min="4" max="40" step="1" value="8">
                 </div>
 
-                <div class="col-md-6 col-lg-3">
+                <div class="col-lg-4 col-md-6">
                     <label for="return-slider" class="form-label">
-                        Annual portfolio return: <span class="slider-value" id="return-value">—</span>
+                        Annual market return: <span class="slider-value" id="return-value">—</span>
                         <span class="slider-default-hint" id="return-default"></span>
                     </label>
                     <input type="range" class="form-range" id="return-slider"
                            min="-30" max="40" step="0.5" value="8">
                 </div>
 
-                <div class="col-md-6 col-lg-3">
-                    <label for="cash-slider" class="form-label">
-                        Quarterly cash Δ: <span class="slider-value" id="cash-value">—</span>
-                        <span class="slider-default-hint" id="cash-default"></span>
+                <div class="col-lg-4 col-md-6">
+                    <label for="contribution-slider" class="form-label">
+                        Quarterly contribution: <span class="slider-value" id="contribution-value">—</span>
+                        <span class="slider-default-hint" id="contribution-default"></span>
                     </label>
-                    <input type="range" class="form-range" id="cash-slider"
-                           min="-50000" max="100000" step="1000" value="0">
-                </div>
-
-                <div class="col-md-6 col-lg-3">
-                    <label for="mortgage-slider" class="form-label">
-                        Quarterly mortgage payment: <span class="slider-value" id="mortgage-value">—</span>
-                        <span class="slider-default-hint" id="mortgage-default"></span>
-                    </label>
-                    <input type="range" class="form-range" id="mortgage-slider"
-                           min="0" max="30000" step="500" value="0">
+                    <input type="range" class="form-range" id="contribution-slider"
+                           min="-50000" max="150000" step="1000" value="0">
                 </div>
             </div>
 

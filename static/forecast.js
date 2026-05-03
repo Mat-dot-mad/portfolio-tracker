@@ -49,113 +49,91 @@ let forecastChart = null;       // Chart.js instance, destroyed before re-render
 // ── Computation Engine ──────────────────────────────
 
 function computeHistoricalStats(timeline) {
-    // Two return series for the portfolio component:
+    // We model NET WORTH directly (not portfolio + cash + mortgage separately).
+    // For each quarter from snapshot 2 onwards, we split ΔNW into:
+    //   - Contributions: known from the imported myfund.pl XLSX (net deposits to wealth system)
+    //   - Market gains: ΔNW − contributions (residual that came from market performance)
     //
-    //   - rawReturns: total portfolio growth per quarter, INCLUDING contributions.
-    //     Shown only as a transparency hint — projecting forward at this rate
-    //     would assume contributions continue forever, which they probably won't
-    //     at the same pace.
+    // The market-return rate = market_gains / NW_prev. This is what we sample
+    // from for Monte Carlo paths. Mortgage paydown is NW-neutral (cash − X,
+    // mortgage − X, NW unchanged), so it doesn't enter the math.
     //
-    //   - marketReturns: ACTUAL market returns, computed by subtracting the
-    //     known per-quarter net contributions (from the imported myfund.pl XLSX)
-    //     from the portfolio's quarterly delta. This is the correct input for
-    //     forward-looking Monte Carlo.
-    //
-    // Note: the FIRST snapshot's net_contributions field includes lumped pre-snapshot
-    // history, so it's not usable for return computation (we'd need the portfolio
-    // value before that period, which we don't have). Per-quarter market returns
-    // therefore start from the SECOND snapshot onward.
-    const rawReturns = [];
-    const marketReturns = [];
+    // The first snapshot's net_contributions field includes lumped pre-snapshot
+    // history, so per-quarter return computation starts from the SECOND snapshot.
+    const nwMarketReturns = [];
+    const rawNwReturns = [];
     for (let i = 1; i < timeline.length; i++) {
         const prev = timeline[i - 1];
         const curr = timeline[i];
-        if (prev.portfolio_total <= 0) continue;
+        const prevNW = prev.portfolio_total + prev.cash_total - prev.mortgage_total;
+        const currNW = curr.portfolio_total + curr.cash_total - curr.mortgage_total;
+        if (prevNW <= 0) continue;
 
-        const portfolioDelta = curr.portfolio_total - prev.portfolio_total;
-        rawReturns.push(portfolioDelta / prev.portfolio_total);
+        const dNW = currNW - prevNW;
+        rawNwReturns.push(dNW / prevNW);
 
-        // net_contributions for snapshot i covers (date_{i-1}, date_i]. Some of that
-        // money may have stayed in cash and not entered the portfolio — but for a
-        // first-order estimate we attribute all of it to the portfolio side.
-        // (Refinement could split contributions between portfolio and cash per the
-        // actual cash_total delta, but it's a small effect.)
         const netContrib = curr.net_contributions || 0;
-        marketReturns.push((portfolioDelta - netContrib) / prev.portfolio_total);
+        nwMarketReturns.push((dNW - netContrib) / prevNW);
     }
 
-    // Mean per-quarter ABSOLUTE delta for cash and mortgage (from snapshots only).
-    let cashDeltaSum = 0, mortgageDeltaSum = 0;
-    let cashCount = 0, mortgageCount = 0;
-    for (let i = 1; i < timeline.length; i++) {
-        cashDeltaSum += (timeline[i].cash_total - timeline[i - 1].cash_total);
-        cashCount++;
-        mortgageDeltaSum += -(timeline[i].mortgage_total - timeline[i - 1].mortgage_total);
-        mortgageCount++;
+    // Default contribution slider: average of the LAST 4 quarters of net_contributions.
+    // Reflects current saving pace (which has grown over time) rather than the
+    // long-run average that includes 2019-2020 when contributions were smaller.
+    // Excludes the first snapshot (which is artificially inflated by the pre-snapshot lump).
+    const recentN = Math.min(4, Math.max(0, timeline.length - 1));
+    let recentSum = 0;
+    for (let i = timeline.length - recentN; i < timeline.length; i++) {
+        recentSum += (timeline[i].net_contributions || 0);
     }
+    const recentContribAvg = recentN > 0 ? recentSum / recentN : 0;
 
-    const meanRaw = rawReturns.length
-        ? rawReturns.reduce((a, b) => a + b, 0) / rawReturns.length
+    const meanRaw = rawNwReturns.length
+        ? rawNwReturns.reduce((a, b) => a + b, 0) / rawNwReturns.length
         : 0;
-    const meanMarket = marketReturns.length
-        ? marketReturns.reduce((a, b) => a + b, 0) / marketReturns.length
+    const meanMarket = nwMarketReturns.length
+        ? nwMarketReturns.reduce((a, b) => a + b, 0) / nwMarketReturns.length
         : 0;
 
-    // Has the cash-flow XLSX been imported? Affects the "default" semantics shown to user.
     const hasCashFlowData = timeline.some(t => (t.net_contributions || 0) !== 0);
 
     return {
-        portfolio: {
-            returns: marketReturns,                            // used by Monte Carlo
+        nw: {
+            returns: nwMarketReturns,
             historicalMean: meanMarket,                        // per-quarter, market-only
             historicalAnnual: Math.pow(1 + meanMarket, 4) - 1, // annualized, market-only
-            rawAnnual: Math.pow(1 + meanRaw, 4) - 1,           // annualized, includes contributions
+            rawAnnual: Math.pow(1 + meanRaw, 4) - 1,           // annualized, raw incl. contribs
             hasCashFlowData,
         },
-        cash: {
-            meanDelta: cashCount ? cashDeltaSum / cashCount : 0,
-        },
-        mortgage: {
-            meanPayment: mortgageCount ? mortgageDeltaSum / mortgageCount : 0,
+        contribution: {
+            recentAvg: recentContribAvg,                       // per quarter
+            recentN: recentN,
         },
     };
 }
 
 function runMonteCarlo(stats, assumptions, horizon, paths = 1000) {
-    const { startPortfolio, startCash, startMortgage } = assumptions;
+    const { startNW, contribution, annualReturn } = assumptions;
 
-    // Always bootstrap from historical returns to preserve quarterly volatility.
-    // If the user moved the return slider away from the historical default, we
-    // SHIFT the bootstrap distribution so its mean equals the user's target —
-    // i.e. each sampled return becomes (sample - historical_mean + override_mean).
-    // This keeps the realistic shape (skewness, big-quarter outliers) of past
-    // returns while honoring the user's "what if mean return were X" question.
-    const histMean = stats.portfolio.historicalMean;
-    const targetQuarterlyMean = Math.pow(1 + assumptions.annualReturn, 1 / 4) - 1;
+    // Bootstrap NW market returns to preserve the historical volatility profile.
+    // If the user moved the return slider, SHIFT the distribution so its mean
+    // equals the user's target — keeps real-world skew/outliers while honoring
+    // the "what if mean return were X" question.
+    const histMean = stats.nw.historicalMean;
+    const targetQuarterlyMean = Math.pow(1 + annualReturn, 1 / 4) - 1;
     const meanShift = targetQuarterlyMean - histMean;
 
-    const returns = stats.portfolio.returns;
+    const returns = stats.nw.returns;
     const allPaths = [];
 
     for (let p = 0; p < paths; p++) {
         const path = [];
-        let portfolio = startPortfolio;
-        let cash = startCash;
-        let mortgage = startMortgage;
-
+        let nw = startNW;
         for (let q = 0; q < horizon; q++) {
-            // Bootstrap-sample a historical return, shift to target mean
             const idx = Math.floor(Math.random() * returns.length);
             const r = returns[idx] + meanShift;
-            portfolio = portfolio * (1 + r);
-
-            // Cash: deterministic linear extension
-            cash = cash + assumptions.cashDelta;
-
-            // Mortgage: deterministic decrease (clamped at 0)
-            mortgage = Math.max(0, mortgage - assumptions.mortgagePayment);
-
-            path.push(portfolio + cash - mortgage);
+            // Each quarter: existing NW earns market return, then add contribution
+            nw = nw * (1 + r) + contribution;
+            path.push(nw);
         }
         allPaths.push(path);
     }
@@ -183,19 +161,11 @@ function summarizePaths(paths) {
 function readSliderAssumptions() {
     const horizon = parseInt(document.getElementById('horizon-slider').value, 10);
     const annualReturn = parseFloat(document.getElementById('return-slider').value) / 100;
-    const cashDelta = parseFloat(document.getElementById('cash-slider').value);
-    const mortgagePayment = parseFloat(document.getElementById('mortgage-slider').value);
+    const contribution = parseFloat(document.getElementById('contribution-slider').value);
 
     const last = timeline[timeline.length - 1];
-    return {
-        horizon,
-        annualReturn,
-        cashDelta,
-        mortgagePayment,
-        startPortfolio: last.portfolio_total,
-        startCash: last.cash_total,
-        startMortgage: last.mortgage_total,
-    };
+    const startNW = last.portfolio_total + last.cash_total - last.mortgage_total;
+    return { horizon, annualReturn, contribution, startNW };
 }
 
 function updateSliderLabels(assumptions) {
@@ -203,34 +173,36 @@ function updateSliderLabels(assumptions) {
     const years = (assumptions.horizon / 4).toFixed(assumptions.horizon % 4 === 0 ? 0 : 2);
     document.getElementById('horizon-years').textContent = `(≈${years} ${years === '1' ? 'year' : 'years'})`;
     document.getElementById('return-value').textContent = formatPct(assumptions.annualReturn * 100);
-    document.getElementById('cash-value').textContent = formatPLN(assumptions.cashDelta);
-    document.getElementById('mortgage-value').textContent = formatPLN(assumptions.mortgagePayment);
+    document.getElementById('contribution-value').textContent = formatPLN(assumptions.contribution);
 }
 
 function setSlidersToHistorical() {
     const h = historicalStats;
     document.getElementById('horizon-slider').value = 8;
-    // Default the return slider to the market-only estimate (contributions backed out).
-    // Clamp to slider range so the visible default isn't pinned to the bound.
-    const slider = document.getElementById('return-slider');
-    const min = parseFloat(slider.min), max = parseFloat(slider.max);
-    const annualPct = h.portfolio.historicalAnnual * 100;
-    slider.value = Math.max(min, Math.min(max, annualPct)).toFixed(1);
-    document.getElementById('cash-slider').value = Math.round(h.cash.meanDelta);
-    document.getElementById('mortgage-slider').value = Math.round(h.mortgage.meanPayment);
+
+    // Return slider: NW market return (true historical, contributions backed out).
+    // Clamp to slider range so the visible default isn't pinned to a bound.
+    const returnSlider = document.getElementById('return-slider');
+    const rMin = parseFloat(returnSlider.min), rMax = parseFloat(returnSlider.max);
+    const annualPct = h.nw.historicalAnnual * 100;
+    returnSlider.value = Math.max(rMin, Math.min(rMax, annualPct)).toFixed(1);
+
+    // Contribution slider: recent (last 4q) average net contribution rate.
+    const contribSlider = document.getElementById('contribution-slider');
+    const cMin = parseFloat(contribSlider.min), cMax = parseFloat(contribSlider.max);
+    const contrib = Math.round(h.contribution.recentAvg);
+    contribSlider.value = Math.max(cMin, Math.min(cMax, contrib));
 }
 
 function showHistoricalDefaultsHints() {
     const h = historicalStats;
-    const marketPct = formatPct(h.portfolio.historicalAnnual * 100);
-    const rawPct = formatPct(h.portfolio.rawAnnual * 100);
-    const sourceLabel = h.portfolio.hasCashFlowData ? 'true market' : 'estimated market';
+    const marketPct = formatPct(h.nw.historicalAnnual * 100);
+    const rawPct = formatPct(h.nw.rawAnnual * 100);
+    const sourceLabel = h.nw.hasCashFlowData ? 'true market' : 'estimated market';
     document.getElementById('return-default').textContent =
         `(${sourceLabel}: ${marketPct} · raw incl. contributions: ${rawPct})`;
-    document.getElementById('cash-default').textContent =
-        `(historical avg: ${formatPLN(h.cash.meanDelta)})`;
-    document.getElementById('mortgage-default').textContent =
-        `(historical avg: ${formatPLN(h.mortgage.meanPayment)})`;
+    document.getElementById('contribution-default').textContent =
+        `(last ${h.contribution.recentN}q avg: ${formatPLN(h.contribution.recentAvg)} / quarter)`;
 }
 
 function render() {
@@ -246,7 +218,7 @@ function render() {
 
 function updateSummaryCards(summary, assumptions) {
     const last = summary[summary.length - 1];
-    const currentNW = assumptions.startPortfolio + assumptions.startCash - assumptions.startMortgage;
+    const currentNW = assumptions.startNW;
 
     function deltaDetail(value) {
         const delta = value - currentNW;
@@ -357,11 +329,62 @@ function renderForecastChart(summary, assumptions) {
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            interaction: {
+                mode: 'index',
+                intersect: false,
+            },
             plugins: {
-                legend: { position: 'bottom' },
+                legend: {
+                    position: 'bottom',
+                    // Hide the invisible P10 baseline from the legend (it's only there
+                    // as a fill anchor for the P10–P90 range above it).
+                    labels: { filter: (item) => item.text !== 'P10' },
+                },
                 tooltip: {
+                    mode: 'index',
+                    intersect: false,
                     callbacks: {
-                        label: ctx => `${ctx.dataset.label}: ${formatPLN(ctx.parsed.y)}`,
+                        title: (items) => {
+                            if (!items.length) return '';
+                            const idx = items[0].dataIndex;
+                            const isForecast = idx >= histLen;
+                            return items[0].label + (isForecast ? ' (projected)' : '');
+                        },
+                        label: (ctx) => {
+                            // Skip the invisible P10 baseline (its values are reused by
+                            // the P10–P90 range line below).
+                            if (ctx.dataset.label === 'P10') return null;
+                            if (ctx.parsed.y == null) return null;
+                            if (ctx.dataset.label === 'P10–P90 range') {
+                                const p10 = ctx.chart.data.datasets[0].data[ctx.dataIndex];
+                                const p90 = ctx.parsed.y;
+                                if (p10 == null) return null;
+                                return `Range (P10–P90): ${formatPLN(p10)} – ${formatPLN(p90)}`;
+                            }
+                            return `${ctx.dataset.label}: ${formatPLN(ctx.parsed.y)}`;
+                        },
+                        afterBody: (items) => {
+                            if (!items.length) return [];
+                            const idx = items[0].dataIndex;
+                            // Extra context only for HISTORICAL points after the first
+                            // (we need the previous snapshot to compute Δ; first snapshot's
+                            // net_contributions includes lumped pre-snapshot history).
+                            if (idx >= histLen || idx === 0) return [];
+
+                            const tl = timeline[idx];
+                            const prevTl = timeline[idx - 1];
+                            const netContrib = tl.net_contributions || 0;
+                            const dNW = (tl.portfolio_total + tl.cash_total - tl.mortgage_total) -
+                                        (prevTl.portfolio_total + prevTl.cash_total - prevTl.mortgage_total);
+                            const marketGain = dNW - netContrib;
+
+                            const fmt = (v) => `${v >= 0 ? '+' : ''}${formatPLN(v)}`;
+                            const lines = [`Net contributions: ${fmt(netContrib)}`];
+                            if (Math.abs(marketGain) >= 1) {
+                                lines.push(`Market gain (implied): ${fmt(marketGain)}`);
+                            }
+                            return lines;
+                        },
                     },
                 },
             },
