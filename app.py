@@ -93,6 +93,39 @@ def _build_dashboard_data():
     cash_total = sum(e["amount_pln"] for e in latest_manual if e["type"] == "cash")
     mortgage_total = sum(e["amount_pln"] for e in latest_manual if e["type"] == "mortgage")
 
+    # Annotate the timeline with cash-flow info if any cash flows have been imported.
+    # Pre-snapshot history is rolled into the first snapshot (per design: lump it
+    # at the earliest snapshot since we have no portfolio value before that).
+    cf_summary = db.get_cash_flow_summary()
+    if timeline and cf_summary["count"] > 0:
+        period_starts = [t["snapshot_date"] for t in timeline]
+        net_per_period = db.get_net_contributions_by_period(period_starts)
+        cumulative = 0.0
+        for i, t in enumerate(timeline):
+            t["net_contributions"] = net_per_period[i]
+            cumulative += net_per_period[i]
+            t["cumulative_invested"] = cumulative
+    else:
+        # No cash flows imported yet — emit zeros so the frontend can branch on this
+        for t in timeline:
+            t["net_contributions"] = 0
+            t["cumulative_invested"] = 0
+
+    # Lifetime aggregates: invested vs. current wealth.
+    # Market gains = (current portfolio + current cash) − net invested.
+    # Mortgage isn't part of "what we put in" — it's a separate liability.
+    current_wealth = portfolio_total + cash_total
+    lifetime = {
+        "available": cf_summary["count"] > 0,
+        "deposited": cf_summary["deposited"],
+        "withdrawn": cf_summary["withdrawn"],
+        "net_invested": cf_summary["net_invested"],
+        "current_wealth": current_wealth,
+        "market_gains": current_wealth - cf_summary["net_invested"],
+        "earliest_date": cf_summary["earliest_date"],
+        "latest_date": cf_summary["latest_date"],
+    }
+
     return {
         "latest": latest,
         "portfolio_total": portfolio_total,
@@ -106,6 +139,7 @@ def _build_dashboard_data():
         "timeline": timeline,
         "snapshots": snapshots,
         "manual_entries": latest_manual,
+        "lifetime": lifetime,
     }
 
 
@@ -262,6 +296,99 @@ def api_import_csv():
             "positions_count": len(positions),
             "total_value": total_value,
             "snapshot_id": snapshot_id,
+        })
+    finally:
+        os.unlink(tmp.name)
+
+
+@app.route("/api/import-cashflows", methods=["POST"])
+def api_import_cashflows():
+    """Import a myfund.pl 'Wkład i wartość' XLSX export.
+
+    Wipes the cash_flows table and inserts every row from the file. The user's
+    workflow is to re-export the full history each quarter, so idempotent
+    replace-all is the simplest correct behavior.
+
+    Expected columns (Polish from myfund.pl): Data, Operacja, Wartość, Waluta,
+    Kurs, Wartość [PLN], Konto, Portfel.
+    """
+    if "file" not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+
+    f = request.files["file"]
+    if not f.filename or not f.filename.lower().endswith(".xlsx"):
+        return jsonify({"error": "Please upload an .xlsx file"}), 400
+
+    import openpyxl
+    import tempfile
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
+    try:
+        f.save(tmp)
+        tmp.close()
+
+        try:
+            wb = openpyxl.load_workbook(tmp.name, read_only=True, data_only=True)
+        except Exception as e:
+            return jsonify({"error": f"Could not open as XLSX: {e}"}), 400
+
+        ws = wb.active
+        rows = list(ws.iter_rows(values_only=True))
+        if len(rows) < 2:
+            return jsonify({"error": "File appears empty (no data rows)"}), 400
+
+        header = rows[0]
+        # Map operation strings to canonical values
+        OP_MAP = {
+            "Wpłata automatyczna": "deposit",
+            "Wypłata automatyczna": "withdrawal",
+        }
+
+        events = []
+        skipped = 0
+        for row in rows[1:]:
+            if not row or row[0] is None:
+                continue
+            data, operacja, wartosc, waluta, kurs, wartosc_pln, konto = row[:7]
+
+            op = OP_MAP.get(operacja)
+            if op is None:
+                skipped += 1
+                continue
+            if wartosc_pln is None:
+                skipped += 1
+                continue
+
+            # Date can be a datetime object (most common) or a string
+            if hasattr(data, "strftime"):
+                event_date = data.strftime("%Y-%m-%d")
+            else:
+                event_date = str(data)[:10]
+
+            events.append({
+                "event_date": event_date,
+                "operation": op,
+                "value_pln": float(wartosc_pln),
+                "currency": waluta,
+                "original_value": float(wartosc) if wartosc is not None else None,
+                "account": konto,
+            })
+
+        if not events:
+            return jsonify({"error": "No valid rows found. Are the operation labels in Polish?"}), 400
+
+        db.replace_cash_flows(events)
+        summary = db.get_cash_flow_summary()
+
+        return jsonify({
+            "ok": True,
+            "imported": len(events),
+            "skipped": skipped,
+            "deposited": summary["deposited"],
+            "withdrawn": summary["withdrawn"],
+            "net_invested": summary["net_invested"],
+            "earliest_date": summary["earliest_date"],
+            "latest_date": summary["latest_date"],
         })
     finally:
         os.unlink(tmp.name)

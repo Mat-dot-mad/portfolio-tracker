@@ -82,7 +82,9 @@ async function loadDashboard() {
     if (btn) btn.textContent = theme === 'dark' ? 'Light' : 'Dark';
 
     renderSummaryCards();
+    renderLifetimeCard();
     renderTimelineChart();
+    renderMoneyInChart();
     initBreakdownTable();
     renderTreemap('chartTags', dashboardData.by_tags, 'Tags');
     renderTreemap('chartAccount', dashboardData.by_account, 'Account');
@@ -145,6 +147,141 @@ function renderSummaryCards() {
             </div>
         </div>
     `).join('');
+}
+
+// ── Lifetime Returns Card ───────────────────────────
+
+function renderLifetimeCard() {
+    const lt = dashboardData.lifetime;
+    const card = document.getElementById('lifetime-card');
+    if (!card) return;
+
+    if (!lt || !lt.available) {
+        card.classList.add('d-none');
+        return;
+    }
+    card.classList.remove('d-none');
+
+    const totalReturnPct = lt.net_invested > 0
+        ? (lt.market_gains / lt.net_invested) * 100
+        : 0;
+    const gainsCls = lt.market_gains >= 0 ? 'text-positive' : 'text-negative';
+
+    // Annualized return — IRR is more correct but requires solving an equation.
+    // Simple compound growth approximation: assumes all contributions arrived at
+    // the start of the period, which UNDERSTATES the true rate when contributions
+    // grow over time. We label it "simple" so the user knows it's an approximation.
+    let annualizedHtml = '';
+    if (lt.earliest_date && lt.latest_date && lt.net_invested > 0 && lt.current_wealth > 0) {
+        const start = new Date(lt.earliest_date);
+        const end = new Date(lt.latest_date);
+        const years = (end - start) / (365.25 * 24 * 3600 * 1000);
+        if (years >= 0.5) {
+            const annual = Math.pow(lt.current_wealth / lt.net_invested, 1 / years) - 1;
+            annualizedHtml = `<span class="text-muted small ms-2">(~${(annual * 100).toFixed(1)}% annualized, simple)</span>`;
+        }
+    }
+
+    document.getElementById('lifetime-stats').innerHTML = `
+        <div class="col-md-3 col-sm-6">
+            <div class="card-label">Net Invested</div>
+            <div class="card-value">${formatPLN(lt.net_invested)}</div>
+            <div class="text-muted small">
+                ${formatPLN(lt.deposited)} in − ${formatPLN(lt.withdrawn)} out
+            </div>
+        </div>
+        <div class="col-md-3 col-sm-6">
+            <div class="card-label">Current Value</div>
+            <div class="card-value">${formatPLN(lt.current_wealth)}</div>
+            <div class="text-muted small">portfolio + cash</div>
+        </div>
+        <div class="col-md-3 col-sm-6">
+            <div class="card-label">Market Gains</div>
+            <div class="card-value ${gainsCls}">${formatPLN(lt.market_gains)}</div>
+            <div class="text-muted small">value − net invested</div>
+        </div>
+        <div class="col-md-3 col-sm-6">
+            <div class="card-label">Total Return</div>
+            <div class="card-value ${gainsCls}">${totalReturnPct >= 0 ? '+' : ''}${totalReturnPct.toFixed(1)}%${annualizedHtml}</div>
+            <div class="text-muted small">gains / invested</div>
+        </div>
+    `;
+
+    if (lt.earliest_date && lt.latest_date) {
+        document.getElementById('lifetime-period').textContent =
+            `Period: ${lt.earliest_date} → ${lt.latest_date}`;
+    }
+}
+
+// ── Money In vs Value Chart ─────────────────────────
+// Two lines on a shared time axis:
+//   1. Cumulative net invested — staircase showing how much you've put in
+//   2. Total wealth (portfolio + cash − mortgage) — actual value
+// The vertical gap is your real market gains.
+
+let moneyInChartInstance = null;
+
+function renderMoneyInChart() {
+    const card = document.getElementById('moneyin-card');
+    const canvas = document.getElementById('chartMoneyIn');
+    if (!card || !canvas) return;
+
+    const timeline = dashboardData.timeline;
+    const lt = dashboardData.lifetime;
+    if (!lt || !lt.available || !timeline.length) {
+        card.classList.add('d-none');
+        return;
+    }
+    card.classList.remove('d-none');
+
+    if (moneyInChartInstance) moneyInChartInstance.destroy();
+
+    const labels = timeline.map(t => t.quarter);
+    const investedSeries = timeline.map(t => t.cumulative_invested);
+    const wealthSeries = timeline.map(t => t.portfolio_total + t.cash_total - t.mortgage_total);
+
+    moneyInChartInstance = new Chart(canvas, {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [
+                {
+                    label: 'Net invested (cumulative)',
+                    data: investedSeries,
+                    borderColor: '#6c757d',
+                    backgroundColor: 'rgba(108, 117, 125, 0.1)',
+                    borderWidth: 2,
+                    tension: 0,             // staircase-ish, no smoothing
+                    stepped: true,
+                    fill: true,
+                },
+                {
+                    label: 'Net worth (portfolio + cash − mortgage)',
+                    data: wealthSeries,
+                    borderColor: '#198754',
+                    backgroundColor: 'rgba(25, 135, 84, 0.15)',
+                    borderWidth: 2.5,
+                    tension: 0.3,
+                    fill: '-1',             // fills toward dataset above (net invested)
+                },
+            ],
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { position: 'bottom' },
+                tooltip: {
+                    callbacks: {
+                        label: ctx => `${ctx.dataset.label}: ${formatPLN(ctx.parsed.y)}`,
+                    },
+                },
+            },
+            scales: {
+                y: { ticks: { callback: v => formatPLN(v) } },
+            },
+        },
+    });
 }
 
 // ── Timeline Line Chart (with Cash) ─────────────────
@@ -762,6 +899,51 @@ async function importCsv() {
             </div>`;
             fileInput.value = '';
             setTimeout(() => loadDashboard(), 800);
+        } else {
+            resultDiv.innerHTML = `<div class="alert alert-danger py-2">${data.error}</div>`;
+        }
+    } catch (err) {
+        resultDiv.innerHTML = `<div class="alert alert-danger py-2">Network error: ${err.message}</div>`;
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Import';
+    }
+}
+
+// ── Cash Flow Import ───────────────────────────────
+
+async function importCashflows() {
+    const fileInput = document.getElementById('cashflowsFileInput');
+    const resultDiv = document.getElementById('cashflowsResult');
+    const btn = document.getElementById('cashflowsBtn');
+
+    if (!fileInput.files.length) {
+        resultDiv.innerHTML = '<div class="alert alert-warning py-2">Please select an XLSX file first.</div>';
+        return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Importing...';
+    resultDiv.innerHTML = '';
+
+    const formData = new FormData();
+    formData.append('file', fileInput.files[0]);
+
+    try {
+        const resp = await fetch('/api/import-cashflows', { method: 'POST', body: formData });
+        const data = await resp.json();
+
+        if (resp.ok) {
+            resultDiv.innerHTML = `<div class="alert alert-success py-2">
+                Imported <strong>${data.imported}</strong> cash-flow events
+                (${data.earliest_date} → ${data.latest_date}).<br>
+                Deposited: ${formatPLN(data.deposited)} · Withdrawn: ${formatPLN(data.withdrawn)}
+                · <strong>Net invested: ${formatPLN(data.net_invested)}</strong>.
+                ${data.skipped ? `Skipped ${data.skipped} unrecognized rows.` : ''}
+                Reloading dashboard...
+            </div>`;
+            fileInput.value = '';
+            setTimeout(() => loadDashboard(), 1200);
         } else {
             resultDiv.innerHTML = `<div class="alert alert-danger py-2">${data.error}</div>`;
         }

@@ -51,16 +51,20 @@ let forecastChart = null;       // Chart.js instance, destroyed before re-render
 function computeHistoricalStats(timeline) {
     // Two return series for the portfolio component:
     //
-    //   - rawReturns: total portfolio growth per quarter (includes cash contributions
-    //     flowing IN). Useful as a transparency hint, but NOT good for forecasting
-    //     because most of it is savings rather than market performance.
+    //   - rawReturns: total portfolio growth per quarter, INCLUDING contributions.
+    //     Shown only as a transparency hint — projecting forward at this rate
+    //     would assume contributions continue forever, which they probably won't
+    //     at the same pace.
     //
-    //   - marketReturns: approximate "market-only" return per quarter, computed by
-    //     subtracting an estimated contribution. Heuristic: if cash went DOWN
-    //     between snapshots, we assume that decrease flowed into the portfolio
-    //     (a contribution). This isn't perfect — cash could have gone to expenses —
-    //     but it's the best estimate we have without explicit contribution tracking.
-    //     We use this for the Monte Carlo sampling.
+    //   - marketReturns: ACTUAL market returns, computed by subtracting the
+    //     known per-quarter net contributions (from the imported myfund.pl XLSX)
+    //     from the portfolio's quarterly delta. This is the correct input for
+    //     forward-looking Monte Carlo.
+    //
+    // Note: the FIRST snapshot's net_contributions field includes lumped pre-snapshot
+    // history, so it's not usable for return computation (we'd need the portfolio
+    // value before that period, which we don't have). Per-quarter market returns
+    // therefore start from the SECOND snapshot onward.
     const rawReturns = [];
     const marketReturns = [];
     for (let i = 1; i < timeline.length; i++) {
@@ -68,20 +72,24 @@ function computeHistoricalStats(timeline) {
         const curr = timeline[i];
         if (prev.portfolio_total <= 0) continue;
 
-        const cashDelta = curr.cash_total - prev.cash_total;
-        const estContribution = Math.max(0, -cashDelta);  // assume cash drop → portfolio
+        const portfolioDelta = curr.portfolio_total - prev.portfolio_total;
+        rawReturns.push(portfolioDelta / prev.portfolio_total);
 
-        rawReturns.push((curr.portfolio_total - prev.portfolio_total) / prev.portfolio_total);
-        marketReturns.push((curr.portfolio_total - prev.portfolio_total - estContribution) / prev.portfolio_total);
+        // net_contributions for snapshot i covers (date_{i-1}, date_i]. Some of that
+        // money may have stayed in cash and not entered the portfolio — but for a
+        // first-order estimate we attribute all of it to the portfolio side.
+        // (Refinement could split contributions between portfolio and cash per the
+        // actual cash_total delta, but it's a small effect.)
+        const netContrib = curr.net_contributions || 0;
+        marketReturns.push((portfolioDelta - netContrib) / prev.portfolio_total);
     }
 
-    // Mean per-quarter ABSOLUTE delta for cash and mortgage
+    // Mean per-quarter ABSOLUTE delta for cash and mortgage (from snapshots only).
     let cashDeltaSum = 0, mortgageDeltaSum = 0;
     let cashCount = 0, mortgageCount = 0;
     for (let i = 1; i < timeline.length; i++) {
         cashDeltaSum += (timeline[i].cash_total - timeline[i - 1].cash_total);
         cashCount++;
-        // For mortgage we want "payment per quarter" → positive number when mortgage decreases.
         mortgageDeltaSum += -(timeline[i].mortgage_total - timeline[i - 1].mortgage_total);
         mortgageCount++;
     }
@@ -93,12 +101,16 @@ function computeHistoricalStats(timeline) {
         ? marketReturns.reduce((a, b) => a + b, 0) / marketReturns.length
         : 0;
 
+    // Has the cash-flow XLSX been imported? Affects the "default" semantics shown to user.
+    const hasCashFlowData = timeline.some(t => (t.net_contributions || 0) !== 0);
+
     return {
         portfolio: {
             returns: marketReturns,                            // used by Monte Carlo
             historicalMean: meanMarket,                        // per-quarter, market-only
             historicalAnnual: Math.pow(1 + meanMarket, 4) - 1, // annualized, market-only
-            rawAnnual: Math.pow(1 + meanRaw, 4) - 1,           // annualized, includes contributions (display only)
+            rawAnnual: Math.pow(1 + meanRaw, 4) - 1,           // annualized, includes contributions
+            hasCashFlowData,
         },
         cash: {
             meanDelta: cashCount ? cashDeltaSum / cashCount : 0,
@@ -212,8 +224,9 @@ function showHistoricalDefaultsHints() {
     const h = historicalStats;
     const marketPct = formatPct(h.portfolio.historicalAnnual * 100);
     const rawPct = formatPct(h.portfolio.rawAnnual * 100);
+    const sourceLabel = h.portfolio.hasCashFlowData ? 'true market' : 'estimated market';
     document.getElementById('return-default').textContent =
-        `(market est: ${marketPct} · raw incl. contributions: ${rawPct})`;
+        `(${sourceLabel}: ${marketPct} · raw incl. contributions: ${rawPct})`;
     document.getElementById('cash-default').textContent =
         `(historical avg: ${formatPLN(h.cash.meanDelta)})`;
     document.getElementById('mortgage-default').textContent =

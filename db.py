@@ -49,6 +49,20 @@ def init_db():
                 original_amount REAL NOT NULL DEFAULT 0,
                 amount_pln REAL NOT NULL
             );
+
+            -- Contribution / withdrawal events imported from myfund.pl XLSX export.
+            -- Wiped and re-inserted on every import (idempotent re-import workflow).
+            CREATE TABLE IF NOT EXISTS cash_flows (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_date TEXT NOT NULL,           -- YYYY-MM-DD
+                operation TEXT NOT NULL,            -- 'deposit' or 'withdrawal'
+                value_pln REAL NOT NULL,
+                currency TEXT,
+                original_value REAL,
+                account TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_cash_flows_date ON cash_flows(event_date);
         """)
 
 
@@ -185,3 +199,105 @@ def get_all_snapshots_summary():
         }
         for r in rows
     ]
+
+
+# ── Cash flow helpers ────────────────────────────────────────────────
+
+def replace_cash_flows(events):
+    """Wipe the cash_flows table and bulk-insert all events.
+
+    Idempotent re-import: caller passes the full set of events parsed from the
+    latest XLSX export, and we replace everything. Avoids deduplication
+    headaches when the source has no stable per-row ID.
+
+    `events` is an iterable of dicts with keys:
+        event_date (YYYY-MM-DD str), operation ('deposit'|'withdrawal'),
+        value_pln (float), currency (str|None), original_value (float|None),
+        account (str|None)
+    """
+    with get_db() as conn:
+        conn.execute("DELETE FROM cash_flows")
+        conn.executemany(
+            """INSERT INTO cash_flows
+               (event_date, operation, value_pln, currency, original_value, account)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            [
+                (
+                    e["event_date"],
+                    e["operation"],
+                    e["value_pln"],
+                    e.get("currency"),
+                    e.get("original_value"),
+                    e.get("account"),
+                )
+                for e in events
+            ],
+        )
+
+
+def get_cash_flow_summary():
+    """Return lifetime totals across all cash flows.
+
+    Returns dict: { count, deposited, withdrawn, net_invested, earliest_date, latest_date }
+    or zeros if the table is empty.
+    """
+    with get_db() as conn:
+        row = conn.execute("""
+            SELECT
+                COUNT(*) AS count,
+                COALESCE(SUM(CASE WHEN operation='deposit' THEN value_pln END), 0) AS deposited,
+                COALESCE(SUM(CASE WHEN operation='withdrawal' THEN value_pln END), 0) AS withdrawn,
+                MIN(event_date) AS earliest_date,
+                MAX(event_date) AS latest_date
+            FROM cash_flows
+        """).fetchone()
+
+    deposited = row["deposited"]
+    withdrawn = row["withdrawn"]
+    return {
+        "count": row["count"],
+        "deposited": deposited,
+        "withdrawn": withdrawn,
+        "net_invested": deposited - withdrawn,
+        "earliest_date": row["earliest_date"],
+        "latest_date": row["latest_date"],
+    }
+
+
+def get_net_contributions_by_period(period_starts):
+    """Net contributions (deposits − withdrawals) summed within each period.
+
+    `period_starts` is a list of date strings (YYYY-MM-DD), one per snapshot,
+    in ascending order. The function returns a list of the same length where:
+
+      result[0] = sum of all events with event_date <= period_starts[0]
+                  (i.e. all pre-snapshot history rolled into the first snapshot,
+                  per the user's preference)
+      result[i] = sum of events with period_starts[i-1] < event_date <= period_starts[i]
+                  (i.e. events strictly after the previous snapshot, up to and
+                  including this one)
+    """
+    if not period_starts:
+        return []
+
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT event_date, operation, value_pln FROM cash_flows ORDER BY event_date ASC"
+        ).fetchall()
+
+    totals = [0.0] * len(period_starts)
+    # Convert period_starts to a sorted list and find the bucket for each event.
+    # Linear scan with two pointers is fine for typical dataset size.
+    bucket_idx = 0
+    for r in rows:
+        ed = r["event_date"]
+        # Advance bucket_idx until period_starts[bucket_idx] >= ed
+        while bucket_idx < len(period_starts) - 1 and ed > period_starts[bucket_idx]:
+            bucket_idx += 1
+        # Edge: if event_date is later than the last snapshot, drop it (after-the-fact data)
+        if ed > period_starts[-1]:
+            continue
+        signed = r["value_pln"] if r["operation"] == "deposit" else -r["value_pln"]
+        totals[bucket_idx] += signed
+
+    return totals
