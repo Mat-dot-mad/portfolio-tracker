@@ -82,7 +82,6 @@ async function loadDashboard() {
     if (btn) btn.textContent = theme === 'dark' ? 'Light' : 'Dark';
 
     renderSummaryCards();
-    renderLifetimeCard();
     renderTimelineChart();
     renderMoneyInChart();
     initBreakdownTable();
@@ -149,70 +148,6 @@ function renderSummaryCards() {
     `).join('');
 }
 
-// ── Lifetime Returns Card ───────────────────────────
-
-function renderLifetimeCard() {
-    const lt = dashboardData.lifetime;
-    const card = document.getElementById('lifetime-card');
-    if (!card) return;
-
-    if (!lt || !lt.available) {
-        card.classList.add('d-none');
-        return;
-    }
-    card.classList.remove('d-none');
-
-    const totalReturnPct = lt.net_invested > 0
-        ? (lt.market_gains / lt.net_invested) * 100
-        : 0;
-    const gainsCls = lt.market_gains >= 0 ? 'text-positive' : 'text-negative';
-
-    // Annualized return — IRR is more correct but requires solving an equation.
-    // Simple compound growth approximation: assumes all contributions arrived at
-    // the start of the period, which UNDERSTATES the true rate when contributions
-    // grow over time. We label it "simple" so the user knows it's an approximation.
-    let annualizedHtml = '';
-    if (lt.earliest_date && lt.latest_date && lt.net_invested > 0 && lt.current_wealth > 0) {
-        const start = new Date(lt.earliest_date);
-        const end = new Date(lt.latest_date);
-        const years = (end - start) / (365.25 * 24 * 3600 * 1000);
-        if (years >= 0.5) {
-            const annual = Math.pow(lt.current_wealth / lt.net_invested, 1 / years) - 1;
-            annualizedHtml = `<span class="text-muted small ms-2">(~${(annual * 100).toFixed(1)}% annualized, simple)</span>`;
-        }
-    }
-
-    document.getElementById('lifetime-stats').innerHTML = `
-        <div class="col-md-3 col-sm-6">
-            <div class="card-label">Net Invested</div>
-            <div class="card-value">${formatPLN(lt.net_invested)}</div>
-            <div class="text-muted small">
-                ${formatPLN(lt.deposited)} in − ${formatPLN(lt.withdrawn)} out
-            </div>
-        </div>
-        <div class="col-md-3 col-sm-6">
-            <div class="card-label">Current Value</div>
-            <div class="card-value">${formatPLN(lt.current_wealth)}</div>
-            <div class="text-muted small">portfolio + cash</div>
-        </div>
-        <div class="col-md-3 col-sm-6">
-            <div class="card-label">Market Gains</div>
-            <div class="card-value ${gainsCls}">${formatPLN(lt.market_gains)}</div>
-            <div class="text-muted small">value − net invested</div>
-        </div>
-        <div class="col-md-3 col-sm-6">
-            <div class="card-label">Total Return</div>
-            <div class="card-value ${gainsCls}">${totalReturnPct >= 0 ? '+' : ''}${totalReturnPct.toFixed(1)}%${annualizedHtml}</div>
-            <div class="text-muted small">gains / invested</div>
-        </div>
-    `;
-
-    if (lt.earliest_date && lt.latest_date) {
-        document.getElementById('lifetime-period').textContent =
-            `Period: ${lt.earliest_date} → ${lt.latest_date}`;
-    }
-}
-
 // ── Money In vs Value Chart ─────────────────────────
 // Two lines on a shared time axis:
 //   1. Cumulative net invested — staircase showing how much you've put in
@@ -233,6 +168,35 @@ function renderMoneyInChart() {
         return;
     }
     card.classList.remove('d-none');
+
+    // Headline stats line above the chart: market gains + total return %.
+    // Annualized rate uses simple compound growth (current_wealth / net_invested)^(1/years).
+    // It assumes all contributions arrived at the start of the period, so it
+    // UNDERSTATES the true IRR when contributions grow over time — labelled
+    // "simple" to make that clear.
+    const totalReturnPct = lt.net_invested > 0
+        ? (lt.market_gains / lt.net_invested) * 100
+        : 0;
+    const gainsCls = lt.market_gains >= 0 ? 'text-positive' : 'text-negative';
+    const sign = lt.market_gains >= 0 ? '+' : '';
+    let annualizedFrag = '';
+    if (lt.earliest_date && lt.latest_date && lt.net_invested > 0 && lt.current_wealth > 0) {
+        const start = new Date(lt.earliest_date);
+        const end = new Date(lt.latest_date);
+        const years = (end - start) / (365.25 * 24 * 3600 * 1000);
+        if (years >= 0.5) {
+            const annual = Math.pow(lt.current_wealth / lt.net_invested, 1 / years) - 1;
+            annualizedFrag = ` / <strong>~${(annual * 100).toFixed(1)}%</strong> annualized`;
+        }
+    }
+    const statsEl = document.getElementById('moneyin-stats');
+    if (statsEl) {
+        statsEl.innerHTML =
+            `Total market gains: <strong class="${gainsCls}">${sign}${formatPLN(lt.market_gains)}</strong> ` +
+            `(<strong class="${gainsCls}">${totalReturnPct >= 0 ? '+' : ''}${totalReturnPct.toFixed(1)}%</strong>` +
+            `${annualizedFrag}, simple) ` +
+            `<span class="text-muted small">since ${lt.earliest_date}</span>`;
+    }
 
     if (moneyInChartInstance) moneyInChartInstance.destroy();
 

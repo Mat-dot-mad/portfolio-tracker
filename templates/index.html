@@ -102,15 +102,6 @@
     <!-- Summary Cards -->
     <div class="row g-3 mb-4" id="summary-cards"></div>
 
-    <!-- Lifetime Returns (only rendered when cash flows have been imported) -->
-    <div class="card mb-4 d-none" id="lifetime-card">
-        <div class="card-body">
-            <h5 class="card-title mb-3">Lifetime Returns</h5>
-            <div id="lifetime-stats" class="row g-3"></div>
-            <div class="text-muted small mt-2" id="lifetime-period"></div>
-        </div>
-    </div>
-
     <!-- Timeline Chart -->
     <div class="card mb-4">
         <div class="card-body">
@@ -125,6 +116,7 @@
     <div class="card mb-4 d-none" id="moneyin-card">
         <div class="card-body">
             <h5 class="card-title">Money In vs Value</h5>
+            <div class="mb-2" id="moneyin-stats" style="font-size: 0.95rem;"></div>
             <p class="text-muted small mb-3">
                 The vertical gap between the lines is your <strong>actual market gains</strong> —
                 i.e. wealth that came from market performance rather than savings.
