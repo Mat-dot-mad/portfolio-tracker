@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Forecast — Portfolio Tracker</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+    <style>
+        .chart-container { position: relative; height: 360px; }
+        .card-value { font-size: 1.4rem; font-weight: 700; }
+        .card-label { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--bs-secondary-color); }
+        .card-detail { font-size: 0.85rem; color: var(--bs-secondary-color); }
+        .card-change { font-size: 0.95rem; font-weight: 600; margin-top: 0.15rem; }
+        .text-positive { color: #198754; }
+        .text-negative { color: #dc3545; }
+        #loading { text-align: center; padding: 4rem 0; }
+
+        /* Slider rows */
+        .slider-row label { font-size: 0.85rem; margin-bottom: 0.25rem; }
+        .slider-value { font-weight: 600; color: var(--bs-body-color); }
+        .slider-default-hint { font-size: 0.75rem; color: var(--bs-secondary-color); margin-left: 0.5rem; }
+    </style>
+</head>
+<body>
+
+<nav class="navbar navbar-dark bg-dark mb-4">
+    <div class="container">
+        <span class="navbar-brand mb-0 h1">Portfolio Tracker</span>
+        <div class="d-flex align-items-center gap-2">
+            <a href="/" class="btn btn-sm btn-outline-light">Dashboard</a>
+            <a href="/compare" class="btn btn-sm btn-outline-light">Compare</a>
+            <a href="/forecast" class="btn btn-sm btn-outline-light active">Forecast</a>
+            <button class="btn btn-sm btn-outline-light" id="themeToggle" onclick="toggleTheme()">Dark</button>
+        </div>
+    </div>
+</nav>
+
+<div class="container" id="app">
+    <div id="loading">Loading...</div>
+</div>
+
+<template id="forecast-template">
+<div>
+
+    <h4 class="mb-3">Forecast</h4>
+
+    <!-- Forecast Settings -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <h5 class="card-title">Forecast Settings</h5>
+            <div class="row g-3 slider-row">
+                <div class="col-md-6 col-lg-3">
+                    <label for="horizon-slider" class="form-label">
+                        Horizon: <span class="slider-value" id="horizon-value">8</span> quarters
+                        <span class="slider-default-hint" id="horizon-years"></span>
+                    </label>
+                    <input type="range" class="form-range" id="horizon-slider"
+                           min="4" max="40" step="1" value="8">
+                </div>
+
+                <div class="col-md-6 col-lg-3">
+                    <label for="return-slider" class="form-label">
+                        Annual portfolio return: <span class="slider-value" id="return-value">—</span>
+                        <span class="slider-default-hint" id="return-default"></span>
+                    </label>
+                    <input type="range" class="form-range" id="return-slider"
+                           min="-30" max="40" step="0.5" value="8">
+                </div>
+
+                <div class="col-md-6 col-lg-3">
+                    <label for="cash-slider" class="form-label">
+                        Quarterly cash Δ: <span class="slider-value" id="cash-value">—</span>
+                        <span class="slider-default-hint" id="cash-default"></span>
+                    </label>
+                    <input type="range" class="form-range" id="cash-slider"
+                           min="-50000" max="100000" step="1000" value="0">
+                </div>
+
+                <div class="col-md-6 col-lg-3">
+                    <label for="mortgage-slider" class="form-label">
+                        Quarterly mortgage payment: <span class="slider-value" id="mortgage-value">—</span>
+                        <span class="slider-default-hint" id="mortgage-default"></span>
+                    </label>
+                    <input type="range" class="form-range" id="mortgage-slider"
+                           min="0" max="30000" step="500" value="0">
+                </div>
+            </div>
+
+            <div class="mt-3 d-flex justify-content-between align-items-center">
+                <button class="btn btn-outline-secondary btn-sm" id="reset-btn">Reset to historical</button>
+                <small class="text-muted">Past performance does not guarantee future results.</small>
+            </div>
+        </div>
+    </div>
+
+    <!-- Projected Net Worth summary cards -->
+    <div class="row g-3 mb-4">
+        <div class="col-sm-6 col-lg-4">
+            <div class="card h-100">
+                <div class="card-body">
+                    <div class="card-label">P10 (Pessimistic)</div>
+                    <div class="card-value text-negative" id="p10-value">—</div>
+                    <div class="card-detail" id="p10-detail"></div>
+                </div>
+            </div>
+        </div>
+        <div class="col-sm-6 col-lg-4">
+            <div class="card h-100">
+                <div class="card-body">
+                    <div class="card-label">Median (P50)</div>
+                    <div class="card-value" id="p50-value">—</div>
+                    <div class="card-detail" id="p50-detail"></div>
+                </div>
+            </div>
+        </div>
+        <div class="col-sm-6 col-lg-4">
+            <div class="card h-100">
+                <div class="card-body">
+                    <div class="card-label">P90 (Optimistic)</div>
+                    <div class="card-value text-positive" id="p90-value">—</div>
+                    <div class="card-detail" id="p90-detail"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Forecast chart -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <h5 class="card-title">Net Worth — History &amp; Forecast</h5>
+            <div class="text-muted mb-3" id="forecast-summary" style="font-size: 0.9rem;"></div>
+            <div class="chart-container">
+                <canvas id="forecast-chart"></canvas>
+            </div>
+        </div>
+    </div>
+
+</div>
+</template>
+
+<script src="{{ url_for('static', filename='forecast.js') }}"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

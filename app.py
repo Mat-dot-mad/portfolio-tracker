@@ -120,6 +120,11 @@ def compare():
     return render_template("compare.html")
 
 
+@app.route("/forecast")
+def forecast():
+    return render_template("forecast.html")
+
+
 @app.route("/api/compare")
 def api_compare():
     """Returns data for comparing two quarters."""
