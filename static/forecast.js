@@ -429,7 +429,7 @@ async function loadForecast() {
     setSlidersToHistorical();
 
     // Wire slider events — `input` for live drag updates
-    ['horizon-slider', 'return-slider', 'cash-slider', 'mortgage-slider'].forEach(id => {
+    ['horizon-slider', 'return-slider', 'contribution-slider'].forEach(id => {
         document.getElementById(id).addEventListener('input', render);
     });
 
