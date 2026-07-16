@@ -87,12 +87,22 @@ function computeHistoricalStats(timeline) {
     }
     const recentContribAvg = recentN > 0 ? recentSum / recentN : 0;
 
-    const meanRaw = rawNwReturns.length
-        ? rawNwReturns.reduce((a, b) => a + b, 0) / rawNwReturns.length
-        : 0;
-    const meanMarket = nwMarketReturns.length
-        ? nwMarketReturns.reduce((a, b) => a + b, 0) / nwMarketReturns.length
-        : 0;
+    // Geometric mean (TWR-style): the constant per-quarter rate that would have
+    // produced the same compound growth. The arithmetic mean is upward-biased
+    // under volatility (Jensen's inequality), so it would overstate the
+    // historical rate by a few tenths of a percentage point.
+    function geometricMean(returns) {
+        if (!returns.length) return 0;
+        let product = 1;
+        for (const r of returns) {
+            if (1 + r <= 0) return 0;  // total wipe-out quarter — rate undefined
+            product *= (1 + r);
+        }
+        return Math.pow(product, 1 / returns.length) - 1;
+    }
+
+    const meanRaw = geometricMean(rawNwReturns);
+    const meanMarket = geometricMean(nwMarketReturns);
 
     const hasCashFlowData = timeline.some(t => (t.net_contributions || 0) !== 0);
 
