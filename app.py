@@ -1,8 +1,6 @@
-import json
 import os
-from datetime import date
 
-from flask import Flask, render_template, request, redirect, url_for, jsonify, make_response, session
+from flask import Flask, render_template, request, redirect, url_for, jsonify, session
 
 import db
 import nbp
@@ -61,7 +59,7 @@ def dashboard():
 
 
 def _build_dashboard_data():
-    """Builds the full dashboard data payload (shared by /api/dashboard and /api/export-html)."""
+    """Builds the full dashboard data payload for /api/dashboard."""
     snapshots = db.get_snapshots()  # Ordered by snapshot_date DESC
     timeline = db.get_all_snapshots_summary()
 
@@ -114,16 +112,28 @@ def _build_dashboard_data():
     # Lifetime aggregates: invested vs. current wealth.
     # Market gains = (current portfolio + current cash) − net invested.
     # Mortgage isn't part of "what we put in" — it's a separate liability.
+    #
+    # IMPORTANT: current_wealth is as of the LAST SNAPSHOT, so the invested
+    # figure must be capped at the same date. The raw cf_summary net_invested
+    # runs through the latest XLSX row, which can be weeks past the snapshot —
+    # using it would count post-snapshot deposits as "money in" before they
+    # show up as value, understating market gains. timeline[-1]'s
+    # cumulative_invested is already capped at the snapshot date.
     current_wealth = portfolio_total + cash_total
+    invested_at_snapshot = (
+        timeline[-1]["cumulative_invested"] if timeline else cf_summary["net_invested"]
+    )
     lifetime = {
         "available": cf_summary["count"] > 0,
         "deposited": cf_summary["deposited"],
         "withdrawn": cf_summary["withdrawn"],
-        "net_invested": cf_summary["net_invested"],
+        "net_invested": invested_at_snapshot,
         "current_wealth": current_wealth,
-        "market_gains": current_wealth - cf_summary["net_invested"],
+        "market_gains": current_wealth - invested_at_snapshot,
         "earliest_date": cf_summary["earliest_date"],
-        "latest_date": cf_summary["latest_date"],
+        # End of the measured period = the snapshot the wealth figure comes from
+        # (keeps the annualized-return calculation consistent).
+        "latest_date": latest["snapshot_date"] if latest else cf_summary["latest_date"],
     }
 
     return {
@@ -337,7 +347,20 @@ def api_import_cashflows():
         if len(rows) < 2:
             return jsonify({"error": "File appears empty (no data rows)"}), 400
 
-        header = rows[0]
+        # The parser below reads columns BY POSITION, so a reordered or shifted
+        # column layout would silently import wrong numbers. Validate the header
+        # row first and fail loudly instead.
+        EXPECTED_HEADER = ("Data", "Operacja", "Wartość", "Waluta", "Kurs", "Wartość [PLN]", "Konto")
+        header = tuple(str(h).strip() if h is not None else "" for h in rows[0][:7])
+        if header != EXPECTED_HEADER:
+            return jsonify({
+                "error": (
+                    f"Unexpected column layout: {list(header)}. "
+                    f"Expected: {list(EXPECTED_HEADER)}. "
+                    "Is this a myfund.pl 'Wkład i wartość' export?"
+                )
+            }), 400
+
         # Map operation strings to canonical values
         OP_MAP = {
             "Wpłata automatyczna": "deposit",
@@ -392,52 +415,6 @@ def api_import_cashflows():
         })
     finally:
         os.unlink(tmp.name)
-
-
-@app.route("/api/export-html")
-def export_html():
-    """Generate a self-contained HTML file with the full dashboard + compare view embedded."""
-    data = _build_dashboard_data()
-
-    # Serialize the data to JSON. Escape "</" so an embedded "</script>" cannot
-    # break out of the inline script tag.
-    data_json = json.dumps(data, ensure_ascii=False, default=str).replace("</", "<\\/")
-
-    # Read the existing JS files so we can inline them in the export.
-    static_dir = os.path.join(os.path.dirname(__file__), "static")
-    with open(os.path.join(static_dir, "app.js"), encoding="utf-8") as f:
-        app_js = f.read()
-    with open(os.path.join(static_dir, "compare.js"), encoding="utf-8") as f:
-        compare_js = f.read()
-
-    # Disable the auto-init calls at the bottom of each file. The export
-    # template provides its own init that uses embedded data instead of fetch().
-    app_js = app_js.replace("\nloadDashboard();", "\n// loadDashboard(); // disabled in static export")
-    compare_js = compare_js.replace("\nloadCompare();", "\n// loadCompare(); // disabled in static export")
-
-    # Strip duplicate top-level const from compare.js — app.js already declares
-    # the same `const IKE_M_ACCOUNTS` in the shared global scope, and two const
-    # declarations of the same name across classic <script> tags throw a
-    # SyntaxError that silently breaks compare.js.
-    compare_js = compare_js.replace(
-        "const IKE_M_ACCOUNTS = ['IKE-M', 'IKE OBLIGACJE'];",
-        "// IKE_M_ACCOUNTS reused from app.js in static export",
-    )
-
-    html = render_template(
-        "export.html",
-        dashboard_json=data_json,
-        app_js=app_js,
-        compare_js=compare_js,
-        export_date=date.today().isoformat(),
-    )
-
-    response = make_response(html)
-    response.headers["Content-Type"] = "text/html; charset=utf-8"
-    response.headers["Content-Disposition"] = (
-        f'attachment; filename="portfolio_{date.today().isoformat()}.html"'
-    )
-    return response
 
 
 def create_app():

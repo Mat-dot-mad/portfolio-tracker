@@ -7,9 +7,10 @@ Tailscale, backed up daily to Google Drive.
 ## Features
 
 - **CSV import** from myFund quarterly exports (auto-detects the snapshot date from the filename)
-- **Dashboard**: summary cards, timeline chart, breakdown table, treemaps by tag and account
-- **Compare view**: diff any two quarters side-by-side
-- **Static HTML export**: a single self-contained HTML file with Dashboard + Compare bundled — works offline, viewable on any device
+- **Cash-flow import** from the myfund.pl "Wkład i wartość" XLSX export (contributions & withdrawals; idempotent re-import)
+- **Dashboard**: summary cards, timeline chart, Money In vs Value chart with lifetime returns, breakdown table, treemaps by tag and account
+- **Compare view**: diff any two quarters side-by-side, with change-by-tag and net-worth-bridge charts
+- **Forecast**: Monte Carlo net-worth projection with what-if sliders (horizon, market return, contribution rate)
 - **NBP currency rates** for non-PLN positions
 - **Password-gated** when `DASHBOARD_PASSWORD` is set (disabled in dev mode)
 
@@ -21,9 +22,9 @@ Tailscale, backed up daily to Google Drive.
 | `db.py` | SQLite schema + helpers (DB path from `DATABASE_PATH` env var) |
 | `nbp.py` | NBP currency-rate fetcher |
 | `import_data.py` | myFund CSV parser |
-| `static/app.js`, `static/compare.js` | Dashboard + Compare frontend |
-| `templates/` | Jinja templates (`index`, `compare`, `login`, `export`) |
-| `requirements.txt` | flask, requests, gunicorn |
+| `static/app.js`, `static/compare.js`, `static/forecast.js` | Dashboard, Compare, and Forecast frontends |
+| `templates/` | Jinja templates (`index`, `compare`, `forecast`, `login`) |
+| `requirements.txt` | flask, requests, gunicorn, openpyxl |
 | `migrate_fix_xtb_ticker.py` | One-off DB migration |
 
 ## Local development
