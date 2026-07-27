@@ -1,3 +1,4 @@
+import hmac
 import os
 
 from flask import Flask, render_template, request, redirect, url_for, jsonify, session
@@ -12,6 +13,28 @@ app = Flask(__name__)
 # A fixed dev fallback is fine because dev mode usually has DASHBOARD_PASSWORD unset
 # (auth disabled), so cookie integrity doesn't matter there.
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-only-change-for-production")
+
+# Reject oversized uploads before buffering them. Real imports are tiny (the
+# CSV and XLSX exports are tens of KB), so 10 MB is generous headroom while
+# still stopping a mis-picked file from being read into memory.
+app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024
+
+# Session cookie hardening. SameSite=Lax is the modern browser default, but
+# setting it explicitly means we don't depend on that default holding.
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+
+
+@app.errorhandler(413)
+def payload_too_large(_e):
+    """Return JSON for oversized uploads.
+
+    Both import endpoints are called via fetch() and parse the response as
+    JSON, so Flask's default HTML error page would surface as an unhelpful
+    JSON parse error in the browser instead of the real reason.
+    """
+    limit_mb = app.config["MAX_CONTENT_LENGTH"] // (1024 * 1024)
+    return jsonify({"error": f"File too large (limit: {limit_mb} MB)."}), 413
 
 
 # --- Authentication -------------------------------------------------------
@@ -38,7 +61,11 @@ def login():
     if request.method == "POST":
         expected = os.environ.get("DASHBOARD_PASSWORD", "")
         submitted = request.form.get("password", "")
-        if expected and submitted == expected:
+        # compare_digest takes constant time regardless of where the strings
+        # diverge, so response timing can't be used to guess the password
+        # character by character. Encode first: it rejects non-ASCII str
+        # arguments, and the password may contain Polish characters.
+        if expected and hmac.compare_digest(submitted.encode("utf-8"), expected.encode("utf-8")):
             session["authenticated"] = True
             return redirect(url_for("dashboard"))
         return render_template("login.html", error="Wrong password"), 401

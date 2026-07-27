@@ -1,4 +1,6 @@
-flask
-requests
-gunicorn
-openpyxl
+# Pinned so the Pi installs exactly what was tested on the dev machine.
+# To upgrade: bump a version here, test locally, then redeploy.
+flask==3.1.3
+requests==2.33.1
+gunicorn==25.3.0
+openpyxl==3.1.5
