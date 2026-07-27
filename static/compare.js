@@ -1,14 +1,10 @@
+// Shared helpers (formatPLN, accountBadge, theme) live in common.js,
+// loaded before this file.
+
 // ── Helpers ──────────────────────────────────────────
 
-function formatPLN(value) {
-    return new Intl.NumberFormat('pl-PL', {
-        style: 'currency',
-        currency: 'PLN',
-        minimumFractionDigits: 0,
-        maximumFractionDigits: 0,
-    }).format(value);
-}
-
+// Amount + percentage change label. The dashboard's formatPctChange() renders
+// percentage only — different output, so they stay separate.
 function formatChange(current, previous) {
     const diff = current - previous;
     const sign = diff >= 0 ? '+' : '';
@@ -20,41 +16,6 @@ function formatChange(current, previous) {
     const cls = diff >= 0 ? 'text-positive' : 'text-negative';
     return `<span class="${cls}">${sign}${formatPLN(diff)}${pct}</span>`;
 }
-
-const IKE_M_ACCOUNTS = ['IKE-M', 'IKE OBLIGACJE'];
-
-function getRetirementType(account) {
-    if (!account) return null;
-    const upper = account.toUpperCase();
-    if (IKE_M_ACCOUNTS.some(a => upper.includes(a))) return 'IKE-M';
-    if (upper.includes('IKZE')) return 'IKZE';
-    if (upper.includes('IKE')) return 'IKE';
-    return null;
-}
-
-function accountBadge(account) {
-    const type = getRetirementType(account);
-    if (type === 'IKE-M') return '<span class="badge badge-ikem ms-1">IKE-M</span>';
-    if (type === 'IKZE')  return '<span class="badge badge-ikze ms-1">IKZE</span>';
-    if (type === 'IKE')   return '<span class="badge badge-ike ms-1">IKE</span>';
-    return '';
-}
-
-// ── Theme ───────────────────────────────────────────
-
-function toggleTheme() {
-    const html = document.documentElement;
-    const next = html.getAttribute('data-bs-theme') === 'dark' ? 'light' : 'dark';
-    html.setAttribute('data-bs-theme', next);
-    localStorage.setItem('theme', next);
-    const btn = document.getElementById('themeToggle');
-    if (btn) btn.textContent = next === 'dark' ? 'Light' : 'Dark';
-}
-
-(function() {
-    const saved = localStorage.getItem('theme') || 'light';
-    document.documentElement.setAttribute('data-bs-theme', saved);
-})();
 
 // ── Compare State ───────────────────────────────────
 

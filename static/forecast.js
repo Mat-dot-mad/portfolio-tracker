@@ -1,13 +1,7 @@
-// ── Helpers ──────────────────────────────────────────
+// Shared helpers (formatPLN, accountBadge, theme) live in common.js,
+// loaded before this file.
 
-function formatPLN(value) {
-    return new Intl.NumberFormat('pl-PL', {
-        style: 'currency',
-        currency: 'PLN',
-        minimumFractionDigits: 0,
-        maximumFractionDigits: 0,
-    }).format(value);
-}
+// ── Helpers ──────────────────────────────────────────
 
 function formatPct(value, decimals = 1) {
     const sign = value >= 0 ? '+' : '';
@@ -23,22 +17,6 @@ function nextQuarter(q) {
     if (n > 4) { n = 1; y += 1; }
     return `${y}-Q${n}`;
 }
-
-// ── Theme ───────────────────────────────────────────
-
-function toggleTheme() {
-    const html = document.documentElement;
-    const next = html.getAttribute('data-bs-theme') === 'dark' ? 'light' : 'dark';
-    html.setAttribute('data-bs-theme', next);
-    localStorage.setItem('theme', next);
-    const btn = document.getElementById('themeToggle');
-    if (btn) btn.textContent = next === 'dark' ? 'Light' : 'Dark';
-}
-
-(function() {
-    const saved = localStorage.getItem('theme') || 'light';
-    document.documentElement.setAttribute('data-bs-theme', saved);
-})();
 
 // ── Forecast State ──────────────────────────────────
 
