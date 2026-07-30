@@ -81,6 +81,48 @@ class TestExtractTicker:
     def test_no_parens_uses_first_word(self):
         assert import_data.extract_ticker("Gotowka PLN", "Cash") == "Gotowka"
 
+    @pytest.mark.parametrize("name,account,expected", [
+        # Share-class marker sits before the ticker. Previously all five of
+        # these returned "Acc", making distinct ETFs indistinguishable.
+        ("iShares Core MSCI World UCITS ETF (Acc) (IWDA.AS) (BOSSA IKZE)",
+         "BOSSA IKZE", "IWDA.AS"),
+        ("iShares Core MSCI World UCITS ETF (Acc) (EUNL.DE) (XTB (PLN))",
+         "XTB (PLN)", "EUNL.DE"),
+        ("iShares Core MSCI Emerging Markets IMI UCITS ETF (Acc) (EMIM.AS) (BOSSA IKE)",
+         "BOSSA IKE", "EMIM.AS"),
+        ("iShares Core MSCI EM IMI UCITS ETF USD (Acc) (EIMI.L) (XTB (PLN))",
+         "XTB (PLN)", "EIMI.L"),
+        ("iShares $ Treasury Bond 20+yr UCITS ETF USD (Acc) (DTLA.L) (XTB (USD))",
+         "XTB (USD)", "DTLA.L"),
+        # Brand name before the ticker — previously returned "Google".
+        ("Alphabet Inc. Class A (Google) (GOOGL) (Interactive Brokers)",
+         "Interactive Brokers", "GOOGL"),
+    ])
+    def test_qualifier_before_ticker_is_skipped(self, name, account, expected):
+        assert import_data.extract_ticker(name, account) == expected
+
+    @pytest.mark.parametrize("name,account,expected", [
+        # The inner "(PLN)" is ticker-shaped but belongs to the account name.
+        ("GPW (XTB (PLN))", "XTB (PLN)", "GPW"),
+        ("JSW (XTB (PLN))", "XTB (PLN)", "JSW"),
+        ("XTB (XTB (PLN))", "XTB (PLN)", "XTB"),
+        ("iShares Physical Gold ETC (IGLN.L) (XTB (USD))", "XTB (USD)", "IGLN.L"),
+    ])
+    def test_currency_in_account_is_not_mistaken_for_a_ticker(self, name, account, expected):
+        assert import_data.extract_ticker(name, account) == expected
+
+    def test_every_extracted_ticker_stays_unique_per_security(self):
+        """Guards the collision that made this bug visible: five different
+        ETFs all resolving to the same ticker."""
+        names = [
+            "iShares Core MSCI World UCITS ETF (Acc) (IWDA.AS) (BOSSA IKZE)",
+            "iShares Core MSCI World UCITS ETF (Acc) (EUNL.DE) (XTB (PLN))",
+            "iShares Core MSCI EM IMI UCITS ETF USD (Acc) (EIMI.L) (XTB (PLN))",
+            "iShares $ Treasury Bond 20+yr UCITS ETF USD (Acc) (DTLA.L) (XTB (USD))",
+        ]
+        tickers = [import_data.extract_ticker(n, None) for n in names]
+        assert len(set(tickers)) == len(tickers), tickers
+
 
 class TestCleanGroupName:
     def test_replaces_non_breaking_space(self):

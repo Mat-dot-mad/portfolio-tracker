@@ -55,14 +55,49 @@ def parse_number(value):
         return 0.0
 
 
+# A ticker is all-caps alphanumerics, optionally suffixed with an exchange
+# code: NVDA, V, GOOGL, IWDA.AS, EIMI.L. Deliberately strict — it has to
+# reject share-class markers like "Acc" and brand names like "Google", which
+# is what distinguishes a real ticker from the other parenthesised qualifiers
+# myFund puts in the same field.
+TICKER_SHAPE = re.compile(r"^[A-Z0-9]{1,6}(\.[A-Z]{1,4})?$")
+
+
+def _looks_like_account_fragment(candidate, account):
+    """True if `candidate` is really part of the account name, not a ticker.
+
+    Catches the inner '(PLN)' of 'GPW (XTB (PLN))', whose account is
+    'XTB (PLN)'. The 3-char floor is load-bearing: Visa's ticker 'V' is a
+    substring of 'Interacti(v)e Brokers', so shorter candidates are exempt.
+    """
+    if not account or len(candidate) < 3:
+        return False
+    return candidate.upper() in account.upper() or account.upper() in candidate.upper()
+
+
 def extract_ticker(walor_name, account=None):
     """Extract ticker symbol from the Walor column.
 
     Stocks:  'NVIDIA Corporation (NVDA) (Interactive Brokers)' -> 'NVDA'
     Bonds:   'EDO1031 (2021-10-22) (Obligacje Skarbowe) (3.90%)' -> 'EDO1031'
     No ticker: 'XTB (BOSSA IKE)' -> 'XTB' (first word, because parens contain account)
+
+    myFund sometimes puts a qualifier BEFORE the ticker — a share class or a
+    brand name:
+        'iShares Core MSCI World UCITS ETF (Acc) (IWDA.AS) (BOSSA IKZE)'
+        'Alphabet Inc. Class A (Google) (GOOGL) (Interactive Brokers)'
+    so the first parenthesised group is not reliably the ticker. Prefer the
+    first group that is actually shaped like one, and only fall back to
+    positional guessing when none is.
     """
-    # Find the first parenthesized value
+    for candidate in re.findall(r"\(([^()]+)\)", walor_name):
+        candidate = candidate.strip()
+        if TICKER_SHAPE.match(candidate) and not _looks_like_account_fragment(candidate, account):
+            return candidate
+
+    # No ticker-shaped group — fall back to the original positional heuristic,
+    # which handles bonds ('EDO1031 (2021-10-22) ...') and names whose only
+    # parentheses hold the account ('XTB (BOSSA IKE)').
     match = re.search(r"\(([^)]+)\)", walor_name)
     if not match:
         # No parentheses at all — use the first word
@@ -78,13 +113,8 @@ def extract_ticker(walor_name, account=None):
     # If the extracted value matches or contains the account name, the CSV
     # omitted the ticker (e.g. "XTB (BOSSA IKE)" or "XTB (XTB (PLN))").
     # Fall back to the first word of the name.
-    # Only check if the extracted value is 3+ chars to avoid false positives
-    # (e.g. ticker "V" for Visa matching "Interactive Brokers").
-    if account and len(first_paren) >= 3:
-        account_upper = account.upper()
-        paren_upper = first_paren.upper()
-        if account_upper in paren_upper or paren_upper in account_upper:
-            return walor_name.split()[0]
+    if _looks_like_account_fragment(first_paren, account):
+        return walor_name.split()[0]
 
     return first_paren
 
