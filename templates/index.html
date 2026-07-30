@@ -127,6 +127,23 @@
         </div>
     </div>
 
+    <!-- Quarterly review (hidden unless GEMINI_API_KEY is configured) -->
+    <div class="card mb-4 d-none" id="commentary-card">
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-start mb-2">
+                <h5 class="card-title mb-0">Quarterly Review</h5>
+                <button class="btn btn-outline-primary btn-sm" id="commentary-btn"
+                        onclick="generateCommentary()">Generate</button>
+            </div>
+            <div class="text-muted small mb-3">
+                Written by Gemini from percentages only — no amounts or account names are sent.
+                Descriptive, not advice.
+            </div>
+            <div id="commentary-body"></div>
+            <div class="text-muted small mt-2" id="commentary-meta"></div>
+        </div>
+    </div>
+
     <!-- Breakdown Table -->
     <div class="card mb-4">
         <div class="card-body">

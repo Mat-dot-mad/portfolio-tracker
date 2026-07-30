@@ -11,6 +11,7 @@ Tailscale, backed up daily to Google Drive.
 - **Dashboard**: summary cards, timeline chart, Money In vs Value chart with lifetime returns, breakdown table, treemaps by tag and account
 - **Compare view**: diff any two quarters side-by-side, with change-by-tag and net-worth-bridge charts
 - **Forecast**: Monte Carlo net-worth projection with what-if sliders (horizon, market return, contribution rate)
+- **Quarterly review**: optional LLM-written summary of the newest quarter (see below)
 - **NBP currency rates** for non-PLN positions
 - **Password-gated** when `DASHBOARD_PASSWORD` is set (disabled in dev mode)
 
@@ -21,6 +22,7 @@ Tailscale, backed up daily to Google Drive.
 | `app.py` | Flask routes, login gate, `create_app()` factory |
 | `db.py` | SQLite schema + helpers (DB path from `DATABASE_PATH` env var) |
 | `nbp.py` | NBP currency-rate fetcher |
+| `gemini.py` | Gemini API client for the quarterly review (optional feature) |
 | `import_data.py` | myFund CSV parser |
 | `static/common.js` | Helpers shared by all pages (`formatPLN`, account badges, theme) |
 | `static/app.js`, `static/compare.js`, `static/forecast.js` | Dashboard, Compare, and Forecast frontends |
@@ -88,6 +90,36 @@ Runs as a systemd service on the Pi, reachable via Tailscale at `http://<your-pi
 | `SECRET_KEY` | Signs Flask session cookies (32-byte hex) |
 | `DASHBOARD_PASSWORD` | Login password — auth is disabled if unset |
 | `DATABASE_PATH` | SQLite file location |
+| `GEMINI_API_KEY` | Enables the quarterly review — the feature is hidden if unset |
+| `GEMINI_MODEL` | Gemini model id (optional; defaults to a Flash model) |
+
+## Quarterly review (optional)
+
+Set `GEMINI_API_KEY` to a key from Google AI Studio and a card appears on the
+dashboard that writes a short prose review of the newest quarter. Leave it unset
+and the feature stays completely hidden — nothing is sent anywhere.
+
+**What gets sent.** Only derived figures: percentage changes, allocation
+percentages and percentage-point deltas, contribution pace relative to the
+recent average, and position names with the account suffix stripped.
+**Absolute amounts and account names are never included.** This matters because
+Google's free tier permits training use and human review; the paid tier has
+stronger terms. The restriction is enforced by tests in
+`tests/test_commentary.py`, not just by convention.
+
+Generation is explicit — it happens when you press the button, never on page
+load. Results are cached per quarter, so a normal visit makes no API call. If
+the underlying figures change afterwards the card says so and offers a
+regenerate.
+
+The prompt instructs the model to use only the supplied figures, calculate
+nothing, and give no investment advice or predictions.
+
+To inspect exactly what would be sent before enabling it:
+
+```bash
+venv/bin/python -c "import json, app; print(json.dumps(app._build_commentary_payload(app._build_dashboard_data()), indent=2, ensure_ascii=False))"
+```
 
 ## Operational commands (run on the Pi)
 

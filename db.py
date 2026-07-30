@@ -63,6 +63,18 @@ def init_db():
             );
 
             CREATE INDEX IF NOT EXISTS idx_cash_flows_date ON cash_flows(event_date);
+
+            -- LLM-generated quarterly review, cached so it is produced once per
+            -- quarter rather than on every dashboard load. payload_hash records
+            -- what the text was generated from, so it can be flagged as stale
+            -- if the underlying figures change (e.g. after a re-import).
+            CREATE TABLE IF NOT EXISTS quarter_commentary (
+                snapshot_id  INTEGER PRIMARY KEY REFERENCES quarterly_snapshots(id) ON DELETE CASCADE,
+                generated_at TEXT NOT NULL,
+                model        TEXT NOT NULL,
+                payload_hash TEXT NOT NULL,
+                text         TEXT NOT NULL
+            );
         """)
 
 
@@ -157,6 +169,7 @@ def delete_snapshot(snapshot_id):
     with get_db() as conn:
         conn.execute("DELETE FROM positions WHERE snapshot_id = ?", (snapshot_id,))
         conn.execute("DELETE FROM manual_entries WHERE snapshot_id = ?", (snapshot_id,))
+        conn.execute("DELETE FROM quarter_commentary WHERE snapshot_id = ?", (snapshot_id,))
         conn.execute("DELETE FROM quarterly_snapshots WHERE id = ?", (snapshot_id,))
 
 
@@ -301,3 +314,30 @@ def get_net_contributions_by_period(period_starts):
         totals[bucket_idx] += signed
 
     return totals
+
+
+# ── Quarterly commentary cache ───────────────────────
+
+def get_commentary(snapshot_id):
+    """Return the cached commentary row for a snapshot, or None."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM quarter_commentary WHERE snapshot_id = ?", (snapshot_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def save_commentary(snapshot_id, text, model, payload_hash):
+    """Insert or replace the cached commentary for a snapshot."""
+    with get_db() as conn:
+        conn.execute(
+            """INSERT INTO quarter_commentary
+               (snapshot_id, generated_at, model, payload_hash, text)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(snapshot_id) DO UPDATE SET
+                 generated_at = excluded.generated_at,
+                 model        = excluded.model,
+                 payload_hash = excluded.payload_hash,
+                 text         = excluded.text""",
+            (snapshot_id, datetime.now().isoformat(), model, payload_hash, text),
+        )

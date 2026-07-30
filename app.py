@@ -1,9 +1,13 @@
+import hashlib
 import hmac
+import json
 import os
+import re
 
 from flask import Flask, render_template, request, redirect, url_for, jsonify, session
 
 import db
+import gemini
 import nbp
 import import_data
 
@@ -184,6 +188,211 @@ def _build_dashboard_data():
 def api_dashboard():
     """Returns all data needed by the single-page dashboard."""
     return jsonify(_build_dashboard_data())
+
+
+# --- Quarterly commentary -------------------------------------------------
+#
+# The only feature that sends portfolio data off this machine. The payload is
+# deliberately restricted to percentages, deltas and position names: no
+# absolute amounts and no account names. tests/test_commentary.py enforces
+# that, because Google's free tier permits training use and human review.
+
+def _strip_account(name, account):
+    """Remove the account suffix myFund appends to position names.
+
+    'iShares Core MSCI World UCITS ETF (Acc) (IWDA.AS) (BOSSA IKZE)'
+      -> 'iShares Core MSCI World UCITS ETF (Acc) (IWDA.AS)'
+
+    Position names are allowed in the payload but account names are not, and
+    myFund bakes the latter into the former.
+    """
+    if not name:
+        return name
+    cleaned = name
+    if account:
+        cleaned = cleaned.replace(f"({account})", "")
+    # Any remaining trailing group that names a broker/wrapper we know about.
+    cleaned = re.sub(
+        r"\s*\((?:BOSSA[^()]*|XTB(?:\s*\([^()]*\))?|ING|Interactive Brokers|"
+        r"tastytrade|Obligacje Skarbowe|IKE Obligacje)\)\s*$",
+        "",
+        cleaned,
+    )
+    return cleaned.strip()
+
+
+def _pct_change(current, previous):
+    """Percent change, or None when the base is zero/missing."""
+    if not previous:
+        return None
+    return round((current - previous) / abs(previous) * 100, 1)
+
+
+def _build_commentary_payload(data):
+    """Derive the figures sent to the LLM from the dashboard payload.
+
+    Pure and unit-testable. Emits ONLY relative measures plus position names.
+    Deliberately contains no PLN amounts and no account names.
+    """
+    timeline = data["timeline"]
+    if len(timeline) < 2:
+        return None
+
+    curr, prev = timeline[-1], timeline[-2]
+    curr_nw = curr["portfolio_total"] + curr["cash_total"] - curr["mortgage_total"]
+    prev_nw = prev["portfolio_total"] + prev["cash_total"] - prev["mortgage_total"]
+    contributions = curr.get("net_contributions") or 0
+
+    # Market-only return: strip contributions out of the net-worth move, the
+    # same definition the forecast page uses.
+    market_return_pct = None
+    if prev_nw:
+        market_return_pct = round((curr_nw - prev_nw - contributions) / abs(prev_nw) * 100, 1)
+
+    # Contribution pace vs. the previous four quarters (excluding this one and
+    # the first snapshot, whose figure includes lumped pre-snapshot history).
+    recent = [t.get("net_contributions") or 0 for t in timeline[1:-1]][-4:]
+    contribution_vs_recent_pct = None
+    if recent:
+        avg = sum(recent) / len(recent)
+        if avg:
+            contribution_vs_recent_pct = round((contributions - avg) / abs(avg) * 100, 0)
+
+    # Allocation by tag, current vs. previous, in percentage points.
+    def alloc(snapshot_id):
+        positions = data["all_positions"].get(snapshot_id, [])
+        total = sum(p["value_pln"] for p in positions)
+        if not total:
+            return {}
+        by_tag = {}
+        for p in positions:
+            by_tag[p["tags"] or "Other"] = by_tag.get(p["tags"] or "Other", 0) + p["value_pln"]
+        return {tag: round(v / total * 100, 1) for tag, v in by_tag.items()}
+
+    curr_alloc, prev_alloc = alloc(curr["id"]), alloc(prev["id"])
+    # sorted() matters: iterating the set directly gives an order that varies
+    # between processes (string hash randomisation), which would change the
+    # serialised JSON and make the cached commentary look permanently stale.
+    alloc_change_pp = {
+        tag: round(curr_alloc.get(tag, 0) - prev_alloc.get(tag, 0), 1)
+        for tag in sorted(set(curr_alloc) | set(prev_alloc))
+    }
+
+    # Positions worth remarking on: material holdings (>=1% of the portfolio)
+    # ranked by how much they moved.
+    def by_key(snapshot_id):
+        out = {}
+        for p in data["all_positions"].get(snapshot_id, []):
+            key = p["ticker"] or p["name"]
+            entry = out.setdefault(key, {"value": 0.0, "name": p["name"], "account": p["account"]})
+            entry["value"] += p["value_pln"]
+        return out
+
+    curr_pos, prev_pos = by_key(curr["id"]), by_key(prev["id"])
+    curr_total = sum(e["value"] for e in curr_pos.values()) or 1
+    movers = []
+    for key, entry in curr_pos.items():
+        weight_pct = round(entry["value"] / curr_total * 100, 1)
+        if weight_pct < 1.0:
+            continue
+        before = prev_pos.get(key)
+        movers.append({
+            "name": _strip_account(entry["name"], entry["account"]),
+            "weight_pct": weight_pct,
+            "change_pct": _pct_change(entry["value"], before["value"]) if before else None,
+            "is_new": before is None,
+        })
+    movers.sort(key=lambda m: abs(m["change_pct"] or 0), reverse=True)
+
+    return {
+        "quarter": curr["quarter"],
+        "previous_quarter": prev["quarter"],
+        "portfolio_change_pct": _pct_change(curr["portfolio_total"], prev["portfolio_total"]),
+        "net_worth_change_pct": _pct_change(curr_nw, prev_nw),
+        "market_return_pct_excluding_contributions": market_return_pct,
+        "contribution_vs_recent_4q_average_pct": contribution_vs_recent_pct,
+        "allocation_pct_by_tag": curr_alloc,
+        "allocation_change_pp_by_tag": alloc_change_pp,
+        "notable_positions": movers[:8],
+        "quarters_of_history": len(timeline),
+        "note": "All monetary amounts withheld by design. Percentages only.",
+    }
+
+
+def _payload_hash(payload):
+    """Stable fingerprint of the payload, used to detect stale commentary.
+
+    sort_keys makes the hash independent of dict ordering, so it stays
+    consistent across processes and Python runs.
+    """
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
+def _commentary_state():
+    """Shared setup for both commentary endpoints.
+
+    Returns (snapshot_id, payload, payload_json, payload_hash) or None when
+    there isn't enough history to say anything.
+    """
+    data = _build_dashboard_data()
+    payload = _build_commentary_payload(data)
+    if payload is None:
+        return None
+    payload_json = json.dumps(payload, ensure_ascii=False, indent=2)
+    return data["timeline"][-1]["id"], payload, payload_json, _payload_hash(payload)
+
+
+@app.route("/api/commentary", methods=["GET"])
+def api_get_commentary():
+    """Return the cached review. Never calls the API — generation is explicit."""
+    if not gemini.is_configured():
+        return jsonify({"available": False, "reason": "GEMINI_API_KEY not set"})
+
+    state = _commentary_state()
+    if state is None:
+        return jsonify({"available": False, "reason": "Needs at least two quarters"})
+
+    snapshot_id, _payload, _payload_json, payload_hash = state
+    cached = db.get_commentary(snapshot_id)
+    if not cached:
+        return jsonify({"available": True, "text": None})
+
+    return jsonify({
+        "available": True,
+        "text": cached["text"],
+        "generated_at": cached["generated_at"],
+        "model": cached["model"],
+        # Underlying figures changed since generation (e.g. after a re-import).
+        "stale": cached["payload_hash"] != payload_hash,
+    })
+
+
+@app.route("/api/commentary", methods=["POST"])
+def api_generate_commentary():
+    """Generate and cache the review. This is what sends data to Google."""
+    if not gemini.is_configured():
+        return jsonify({"error": "GEMINI_API_KEY is not set"}), 503
+
+    state = _commentary_state()
+    if state is None:
+        return jsonify({"error": "Need at least two quarters of history"}), 400
+
+    snapshot_id, _payload, payload_json, payload_hash = state
+    try:
+        text = gemini.generate_commentary(payload_json)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 502
+
+    model = gemini.get_model()
+    db.save_commentary(snapshot_id, text, model, payload_hash)
+    return jsonify({
+        "ok": True,
+        "text": text,
+        "model": model,
+        "generated_at": db.get_commentary(snapshot_id)["generated_at"],
+        "stale": False,
+    })
 
 
 @app.route("/compare")

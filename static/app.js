@@ -40,6 +40,7 @@ async function loadDashboard() {
     renderSummaryCards();
     renderTimelineChart();
     renderMoneyInChart();
+    loadCommentary();   // async, never blocks the dashboard
     initBreakdownTable();
     renderTreemap('chartTags', dashboardData.by_tags, 'Tags');
     renderTreemap('chartAccount', dashboardData.by_account, 'Account');
@@ -827,6 +828,86 @@ async function importCsv() {
     } finally {
         btn.disabled = false;
         btn.textContent = 'Import';
+    }
+}
+
+// ── Quarterly Review (LLM commentary) ──────────────
+
+// Renders the model's text as plain paragraphs via textContent. The text comes
+// from an external API, so it is never inserted as HTML.
+function renderCommentaryText(text) {
+    const body = document.getElementById('commentary-body');
+    body.innerHTML = '';
+    for (const para of text.split(/\n\s*\n/)) {
+        if (!para.trim()) continue;
+        const p = document.createElement('p');
+        p.className = 'mb-2';
+        p.textContent = para.trim();
+        body.appendChild(p);
+    }
+}
+
+function setCommentaryMeta(data) {
+    const meta = document.getElementById('commentary-meta');
+    if (!data.generated_at) { meta.textContent = ''; return; }
+    const when = new Date(data.generated_at).toLocaleString('pl-PL');
+    meta.textContent = `Generated ${when} · ${data.model}` +
+        (data.stale ? ' · figures have changed since — regenerate for an up-to-date review' : '');
+    meta.classList.toggle('text-warning', !!data.stale);
+}
+
+async function loadCommentary() {
+    const card = document.getElementById('commentary-card');
+    if (!card) return;
+
+    let data;
+    try {
+        data = await (await fetch('/api/commentary')).json();
+    } catch {
+        return;  // dashboard must not depend on this feature
+    }
+
+    // Feature switched off (no API key) — leave the card hidden entirely.
+    if (!data.available) return;
+    card.classList.remove('d-none');
+
+    const btn = document.getElementById('commentary-btn');
+    if (data.text) {
+        renderCommentaryText(data.text);
+        setCommentaryMeta(data);
+        btn.textContent = 'Regenerate';
+    } else {
+        document.getElementById('commentary-body').innerHTML =
+            '<p class="text-muted mb-0">No review yet for this quarter.</p>';
+        btn.textContent = 'Generate';
+    }
+}
+
+async function generateCommentary() {
+    const btn = document.getElementById('commentary-btn');
+    const body = document.getElementById('commentary-body');
+
+    btn.disabled = true;
+    btn.textContent = 'Writing…';
+    body.innerHTML = '<p class="text-muted mb-0">Asking Gemini…</p>';
+
+    try {
+        const resp = await fetch('/api/commentary', { method: 'POST' });
+        const data = await resp.json();
+        if (resp.ok) {
+            renderCommentaryText(data.text);
+            setCommentaryMeta(data);
+        } else {
+            body.innerHTML = `<div class="alert alert-danger py-2 mb-0"></div>`;
+            body.querySelector('.alert').textContent = data.error;
+            document.getElementById('commentary-meta').textContent = '';
+        }
+    } catch (err) {
+        body.innerHTML = '<div class="alert alert-danger py-2 mb-0"></div>';
+        body.querySelector('.alert').textContent = `Network error: ${err.message}`;
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Regenerate';
     }
 }
 
