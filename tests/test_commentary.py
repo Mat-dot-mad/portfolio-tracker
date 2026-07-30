@@ -134,6 +134,21 @@ class TestPayloadContent:
         # market-only figure is below the raw net-worth change.
         assert p["market_return_pct_excluding_contributions"] < p["net_worth_change_pct"]
 
+    def test_position_change_field_is_named_as_a_value_change(self, client, two_quarters):
+        """Regression: the field was called 'change_pct', so the model reported a
+        position that had been topped up as though the security had appreciated
+        ('Microsoft saw a particularly large gain of 103.0 percent'). The name
+        and the accompanying note have to make the distinction explicit."""
+        p = _payload(client)
+        for position in p["notable_positions"]:
+            assert "value_change_pct" in position
+            assert "change_pct" not in position
+
+    def test_payload_warns_that_position_changes_include_trading(self, client, two_quarters):
+        notes = " ".join(_payload(client)["notes"]).lower()
+        assert "value_change_pct" in notes
+        assert "buying" in notes or "selling" in notes
+
     def test_returns_none_with_insufficient_history(self, client, make_snapshot):
         make_snapshot("2026-Q1", "2026-03-31", portfolio=1000.0)
         assert app_module._build_commentary_payload(app_module._build_dashboard_data()) is None

@@ -299,10 +299,14 @@ def _build_commentary_payload(data):
         movers.append({
             "name": _strip_account(entry["name"], entry["account"]),
             "weight_pct": weight_pct,
-            "change_pct": _pct_change(entry["value"], before["value"]) if before else None,
+            # Change in the position's VALUE, which moves on purchases and sales
+            # as well as price. Naming it plainly "change_pct" led the model to
+            # report a position that was topped up as though the security itself
+            # had appreciated.
+            "value_change_pct": _pct_change(entry["value"], before["value"]) if before else None,
             "is_new": before is None,
         })
-    movers.sort(key=lambda m: abs(m["change_pct"] or 0), reverse=True)
+    movers.sort(key=lambda m: abs(m["value_change_pct"] or 0), reverse=True)
 
     return {
         "quarter": curr["quarter"],
@@ -315,7 +319,14 @@ def _build_commentary_payload(data):
         "allocation_change_pp_by_tag": alloc_change_pp,
         "notable_positions": movers[:8],
         "quarters_of_history": len(timeline),
-        "note": "All monetary amounts withheld by design. Percentages only.",
+        "notes": [
+            "All monetary amounts withheld by design. Percentages only.",
+            "notable_positions[].value_change_pct is the change in the position's "
+            "VALUE. It reflects buying or selling as well as price movement, so it "
+            "must NOT be described as the security appreciating or performing.",
+            "Only portfolio-level market_return_pct_excluding_contributions has "
+            "contributions removed. Position-level figures do not.",
+        ],
     }
 
 
