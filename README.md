@@ -22,9 +22,12 @@ Tailscale, backed up daily to Google Drive.
 | `db.py` | SQLite schema + helpers (DB path from `DATABASE_PATH` env var) |
 | `nbp.py` | NBP currency-rate fetcher |
 | `import_data.py` | myFund CSV parser |
+| `static/common.js` | Helpers shared by all pages (`formatPLN`, account badges, theme) |
 | `static/app.js`, `static/compare.js`, `static/forecast.js` | Dashboard, Compare, and Forecast frontends |
 | `templates/` | Jinja templates (`index`, `compare`, `forecast`, `login`) |
-| `requirements.txt` | flask, requests, gunicorn, openpyxl |
+| `tests/` | pytest suite (parsers, cash-flow aggregation, API, auth) |
+| `requirements.txt` | Runtime deps, pinned: flask, requests, gunicorn, openpyxl |
+| `requirements-dev.txt` | Runtime deps + pytest (local only, never installed on the Pi) |
 | `migrate_fix_xtb_ticker.py` | One-off DB migration |
 
 ## Local development
@@ -35,12 +38,31 @@ source venv/bin/activate
 python3 app.py                  # Flask dev server on http://127.0.0.1:5001 (no auth)
 ```
 
-Test prod-like with gunicorn + auth:
+Run prod-like with gunicorn + auth:
 
 ```bash
 DATABASE_PATH=./portfolio.db DASHBOARD_PASSWORD=test SECRET_KEY=dev-key \
   venv/bin/python -m gunicorn 'app:create_app()' --bind 127.0.0.1:5001
 ```
+
+## Tests
+
+Install the dev dependencies once:
+
+```bash
+venv/bin/python -m pip install -r requirements-dev.txt
+```
+
+Then run the suite:
+
+```bash
+venv/bin/python -m pytest
+```
+
+Every test runs against a temporary SQLite file — `portfolio.db` is never
+touched. Coverage focuses on the logic where a silent error would corrupt data
+without any visible symptom: CSV/XLSX parsing, the cash-flow-to-quarter
+bucketing rules, the lifetime-returns calculation, and the auth gate.
 
 ## Production (Raspberry Pi)
 
