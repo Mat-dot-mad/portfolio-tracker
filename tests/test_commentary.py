@@ -262,6 +262,60 @@ class TestGeminiClient:
         with pytest.raises(ValueError, match="SAFETY"):
             gemini.generate_commentary("{}")
 
+    def test_truncated_response_raises_instead_of_returning_half_a_sentence(self, monkeypatch):
+        """Regression: with a thinking-capable model, internal reasoning consumed
+        the output budget and the review was cached cut off mid-sentence
+        ('...net worth rose by 21.'). Truncation must fail, not be presented as
+        a finished review."""
+        class FakeResponse:
+            status_code = 200
+            text = ""
+            def json(self):
+                return {"candidates": [{
+                    "content": {"parts": [{"text": "The portfolio grew by 21.3%, while net worth rose by 21."}]},
+                    "finishReason": "MAX_TOKENS",
+                }]}
+
+        monkeypatch.setenv("GEMINI_API_KEY", "k")
+        monkeypatch.setattr(gemini.requests, "post", lambda *a, **k: FakeResponse())
+        with pytest.raises(ValueError, match="token output limit"):
+            gemini.generate_commentary("{}")
+
+    def test_thinking_parts_are_excluded_from_the_text(self, monkeypatch):
+        class FakeResponse:
+            status_code = 200
+            text = ""
+            def json(self):
+                return {"candidates": [{
+                    "content": {"parts": [
+                        {"text": "internal reasoning", "thought": True},
+                        {"text": "The visible review."},
+                    ]},
+                    "finishReason": "STOP",
+                }]}
+
+        monkeypatch.setenv("GEMINI_API_KEY", "k")
+        monkeypatch.setattr(gemini.requests, "post", lambda *a, **k: FakeResponse())
+        assert gemini.generate_commentary("{}") == "The visible review."
+
+    def test_all_budget_spent_on_thinking_reports_the_reason(self, monkeypatch):
+        """A thinking model can burn the whole budget and return no text at all."""
+        class FakeResponse:
+            status_code = 200
+            text = ""
+            def json(self):
+                return {"candidates": [{"content": {"parts": []}, "finishReason": "MAX_TOKENS"}]}
+
+        monkeypatch.setenv("GEMINI_API_KEY", "k")
+        monkeypatch.setattr(gemini.requests, "post", lambda *a, **k: FakeResponse())
+        with pytest.raises(ValueError, match="token output limit"):
+            gemini.generate_commentary("{}")
+
+    def test_output_budget_is_large_enough_for_a_thinking_model(self):
+        """Guards against the cap being trimmed back to a value that only suits
+        non-thinking models."""
+        assert gemini.MAX_OUTPUT_TOKENS >= 2000
+
     def test_successful_response_is_joined(self, monkeypatch):
         class FakeResponse:
             status_code = 200

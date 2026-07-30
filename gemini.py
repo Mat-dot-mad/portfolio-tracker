@@ -24,7 +24,14 @@ import requests
 
 API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 DEFAULT_MODEL = "gemini-2.0-flash"
-TIMEOUT_SECONDS = 30
+TIMEOUT_SECONDS = 60
+
+# Generous on purpose. Thinking-capable models (2.5 and later) spend output
+# tokens on internal reasoning before emitting any visible text, and this cap
+# covers both. Sized too tightly, reasoning eats the budget and the review is
+# truncated mid-sentence. We are billed for what is produced, not for the cap,
+# so headroom is free.
+MAX_OUTPUT_TOKENS = 4000
 
 # Kept deliberately narrow. The model gets pre-computed figures and must not
 # do arithmetic — LLMs are unreliable at it, and a wrong number about someone's
@@ -73,7 +80,7 @@ def generate_commentary(payload_json):
         "contents": [{"parts": [{"text": payload_json}]}],
         "generationConfig": {
             "temperature": 0.4,   # low: this is reporting, not creative writing
-            "maxOutputTokens": 800,
+            "maxOutputTokens": MAX_OUTPUT_TOKENS,
         },
     }
 
@@ -107,9 +114,28 @@ def generate_commentary(payload_json):
         reason = (data.get("promptFeedback") or {}).get("blockReason", "unknown")
         raise ValueError(f"Gemini returned no content (reason: {reason})")
 
-    parts = (candidates[0].get("content") or {}).get("parts") or []
-    text = "".join(p.get("text", "") for p in parts).strip()
+    candidate = candidates[0]
+    parts = (candidate.get("content") or {}).get("parts") or []
+
+    # Thinking models can return reasoning parts alongside the answer when the
+    # API is asked to include them. Those are not the review, so drop them.
+    text = "".join(
+        p.get("text", "") for p in parts if not p.get("thought")
+    ).strip()
+
+    # Truncation must not be returned as if it were a finished review — that is
+    # how a half-sentence ended up cached. Fail loudly instead.
+    finish_reason = candidate.get("finishReason")
+    if finish_reason == "MAX_TOKENS":
+        raise ValueError(
+            f"Gemini hit the {MAX_OUTPUT_TOKENS}-token output limit before finishing. "
+            "If this recurs, raise MAX_OUTPUT_TOKENS in gemini.py or pick a model "
+            "that spends fewer tokens on internal reasoning."
+        )
+
     if not text:
-        raise ValueError("Gemini returned an empty response")
+        raise ValueError(
+            f"Gemini returned no usable text (finishReason: {finish_reason or 'unknown'})"
+        )
 
     return text
