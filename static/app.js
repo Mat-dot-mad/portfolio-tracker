@@ -104,8 +104,14 @@ function renderSummaryCards() {
     // permanent 0 zl card to users without PPK would be noise.
     cards = cards.filter(c => !(c.hideWhenZero && !d.ppk_total));
 
+    // The 12-column grid can't split into 5, so use row-cols-* instead and set
+    // the large-screen count from however many cards there actually are — 4
+    // without a PPK balance, 5 with one.
+    container.className =
+        `row g-3 mb-4 row-cols-2 row-cols-md-3 row-cols-lg-${cards.length}`;
+
     container.innerHTML = cards.map(c => `
-        <div class="col-sm-6 col-lg-3">
+        <div class="col">
             <div class="card h-100">
                 <div class="card-body">
                     <div class="card-label">${c.label}</div>

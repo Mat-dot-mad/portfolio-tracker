@@ -310,3 +310,24 @@ class TestPpkIntegration:
         assert d["ppk_total"] == 0
         assert "PPK" not in d["by_tags"]
         assert d["portfolio_total"] == pytest.approx(100_000)
+
+    def test_ppk_is_not_counted_as_market_gains(self, client, snapshot_with_ppk, make_cash_flows):
+        """Regression: PPK contributions come from payroll and never appear in
+        the myfund cash-flow export. Folding PPK into portfolio value therefore
+        raised current_wealth without raising net_invested, reporting the whole
+        PPK balance as market gains."""
+        make_cash_flows(("2026-01-01", "deposit", 80_000.0))
+
+        lifetime = client.get("/api/dashboard").get_json()["lifetime"]
+
+        # Tracked capital is 100k positions + 10k cash; PPK's 25k is excluded
+        # from both sides, so gains are 110k - 80k, not 135k - 80k.
+        assert lifetime["current_wealth"] == pytest.approx(110_000)
+        assert lifetime["market_gains"] == pytest.approx(30_000)
+
+    def test_ppk_still_counts_toward_net_worth(self, client, snapshot_with_ppk, make_cash_flows):
+        """Excluding PPK from the gains calculation must not remove it from
+        net worth — it is still real money."""
+        make_cash_flows(("2026-01-01", "deposit", 80_000.0))
+        d = client.get("/api/dashboard").get_json()
+        assert d["net_worth"] == pytest.approx(135_000)

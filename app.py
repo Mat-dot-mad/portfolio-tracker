@@ -193,7 +193,13 @@ def _build_dashboard_data():
     # using it would count post-snapshot deposits as "money in" before they
     # show up as value, understating market gains. timeline[-1]'s
     # cumulative_invested is already capped at the snapshot date.
-    current_wealth = portfolio_total + cash_total
+    #
+    # PPK is excluded from BOTH sides. Its contributions come from payroll and
+    # never appear in the myfund cash-flow export, so counting its balance as
+    # wealth while its contributions are missing from net_invested would report
+    # the entire PPK pot as market gains. Comparing only myfund-tracked capital
+    # against myfund-tracked contributions keeps the two sides consistent.
+    current_wealth = portfolio_total - ppk_total + cash_total
     invested_at_snapshot = (
         timeline[-1]["cumulative_invested"] if timeline else cf_summary["net_invested"]
     )
