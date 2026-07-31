@@ -192,7 +192,8 @@ def get_all_snapshots_summary():
                 s.snapshot_date,
                 COALESCE(p.total, 0) AS portfolio_total,
                 COALESCE(mc.total, 0) AS cash_total,
-                COALESCE(mm.total, 0) AS mortgage_total
+                COALESCE(mm.total, 0) AS mortgage_total,
+                COALESCE(mp.total, 0) AS ppk_total
             FROM quarterly_snapshots s
             LEFT JOIN (
                 SELECT snapshot_id, SUM(value_pln) AS total
@@ -206,6 +207,10 @@ def get_all_snapshots_summary():
                 SELECT snapshot_id, SUM(amount_pln) AS total
                 FROM manual_entries WHERE type = 'mortgage' GROUP BY snapshot_id
             ) mm ON mm.snapshot_id = s.id
+            LEFT JOIN (
+                SELECT snapshot_id, SUM(amount_pln) AS total
+                FROM manual_entries WHERE type = 'ppk' GROUP BY snapshot_id
+            ) mp ON mp.snapshot_id = s.id
             ORDER BY s.snapshot_date ASC
         """).fetchall()
 
@@ -214,10 +219,13 @@ def get_all_snapshots_summary():
             "id": r["id"],
             "quarter": r["quarter"],
             "snapshot_date": r["snapshot_date"],
-            "portfolio_total": r["portfolio_total"],
+            # PPK is manually entered but is invested capital, so it counts
+            # inside portfolio_total. Kept separately too, for its own card.
+            "portfolio_total": r["portfolio_total"] + r["ppk_total"],
+            "ppk_total": r["ppk_total"],
             "cash_total": r["cash_total"],
             "mortgage_total": r["mortgage_total"],
-            "net_worth": r["portfolio_total"] + r["cash_total"] - r["mortgage_total"],
+            "net_worth": r["portfolio_total"] + r["ppk_total"] + r["cash_total"] - r["mortgage_total"],
         }
         for r in rows
     ]
@@ -369,3 +377,18 @@ def save_retirement_settings(settings):
                ON CONFLICT(key) DO UPDATE SET value = excluded.value""",
             [(k, str(v)) for k, v in settings.items()],
         )
+
+
+def get_manual_entry_totals_by_type(entry_type):
+    """Total of one manual-entry type per snapshot: {snapshot_id: amount}.
+
+    One query instead of per-snapshot lookups, so PPK can be folded into every
+    snapshot's positions without N round trips.
+    """
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT snapshot_id, SUM(amount_pln) AS total
+               FROM manual_entries WHERE type = ? GROUP BY snapshot_id""",
+            (entry_type,),
+        ).fetchall()
+    return {r["snapshot_id"]: r["total"] for r in rows}

@@ -67,7 +67,7 @@ function renderResults(d) {
 
 function renderBuckets(d) {
     const b = d.balances;
-    const total = b.taxable + b.ike + b.ikze;
+    const total = b.taxable + b.ike + b.ikze + (b.ppk || 0);
     const s = d.settings;
     if (!total) return;
 
@@ -75,6 +75,7 @@ function renderBuckets(d) {
         { label: 'Taxable — any time', value: b.taxable, color: '#198754' },
         { label: `IKE — from ${s.ike_access_age}`, value: b.ike, color: '#0d6efd' },
         { label: `IKZE — from ${s.ikze_access_age}`, value: b.ikze, color: '#fd7e14' },
+        { label: `PPK — from ${s.ppk_access_age}`, value: b.ppk || 0, color: '#6f42c1' },
     ];
 
     const bar = document.getElementById('bucket-bar');
@@ -89,11 +90,12 @@ function renderBuckets(d) {
         bar.appendChild(el);
     }
 
-    const locked = b.ike + b.ikze;
+    const locked = b.ike + b.ikze + (b.ppk || 0);
     document.getElementById('bucket-summary').innerHTML =
         `<strong>${formatPLN(b.taxable)}</strong> reachable now · ` +
         `<strong>${formatPLN(b.ike)}</strong> from age ${s.ike_access_age} · ` +
-        `<strong>${formatPLN(b.ikze)}</strong> from age ${s.ikze_access_age}. ` +
+        `<strong>${formatPLN(b.ikze)}</strong> from age ${s.ikze_access_age}` +
+        ((b.ppk || 0) > 0 ? ` · <strong>${formatPLN(b.ppk)}</strong> PPK from age ${s.ppk_access_age}` : '') + '. ' +
         `That is ${formatPct(locked / total)} of capital behind an age gate. ` +
         `Cost basis is estimated at ${formatPct(d.basis_ratio)} of value, so Belka applies to the rest.`;
 }

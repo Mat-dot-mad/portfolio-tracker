@@ -56,16 +56,17 @@ function renderSummaryCards() {
     const tl = d.timeline;
 
     // Find previous quarter totals for QoQ change
-    let prevPortfolio = 0, prevCash = 0, prevMortgage = 0, prevNet = 0;
+    let prevPortfolio = 0, prevCash = 0, prevMortgage = 0, prevNet = 0, prevPpk = 0;
     if (tl.length >= 2) {
         const prev = tl[tl.length - 2];
         prevPortfolio = prev.portfolio_total;
         prevCash = prev.cash_total;
         prevMortgage = prev.mortgage_total;
         prevNet = prev.net_worth;
+        prevPpk = prev.ppk_total || 0;
     }
 
-    const cards = [
+    let cards = [
         {
             label: `Portfolio (${quarter})`,
             value: formatPLN(d.portfolio_total),
@@ -77,6 +78,13 @@ function renderSummaryCards() {
             value: formatPLN(d.cash_total),
             change: tl.length >= 2 ? formatPctChange(d.cash_total, prevCash) : '',
             color: '',
+        },
+        {
+            label: `PPK (${quarter})`,
+            value: formatPLN(d.ppk_total || 0),
+            change: tl.length >= 2 ? formatPctChange(d.ppk_total || 0, prevPpk) : '',
+            color: '',
+            hideWhenZero: true,
         },
         {
             label: `Mortgage (${quarter})`,
@@ -91,6 +99,10 @@ function renderSummaryCards() {
             color: d.net_worth >= 0 ? 'text-positive' : 'text-negative',
         },
     ];
+
+    // A PPK card is only meaningful once a balance has been entered; showing a
+    // permanent 0 zl card to users without PPK would be noise.
+    cards = cards.filter(c => !(c.hideWhenZero && !d.ppk_total));
 
     container.innerHTML = cards.map(c => `
         <div class="col-sm-6 col-lg-3">
@@ -712,6 +724,10 @@ async function loadManualEntries(snapshotId) {
     else { cashEntries.forEach(e => addCashRow(e.currency || 'PLN', e.original_amount || e.amount_pln, e.label)); }
     const mortgage = entries.find(e => e.type === 'mortgage');
     document.getElementById('mortgageAmount').value = mortgage ? mortgage.amount_pln : '';
+
+    const ppk = entries.find(e => e.type === 'ppk');
+    document.getElementById('ppkAmount').value = ppk ? ppk.amount_pln : '';
+    if (ppk && ppk.label) document.getElementById('ppkLabel').value = ppk.label;
     document.getElementById('mortgageLabel').value = mortgage ? mortgage.label : 'Mortgage';
     document.getElementById('saveStatus').textContent = '';
 }
@@ -763,6 +779,12 @@ async function saveManualEntries() {
             catch { alert(`Could not fetch ${currency} rate. Save aborted.`); return; }
         }
         entries.push({ type: 'cash', label: label || `Cash ${currency}`, currency, original_amount: originalAmount, amount_pln: Math.round(amountPln * 100) / 100 });
+    }
+
+    const ppkAmount = parseFloat(document.getElementById('ppkAmount').value);
+    const ppkLabel = document.getElementById('ppkLabel').value;
+    if (ppkAmount) {
+        entries.push({ type: 'ppk', label: ppkLabel || 'PPK', currency: 'PLN', original_amount: ppkAmount, amount_pln: ppkAmount });
     }
 
     const mortgageAmount = parseFloat(document.getElementById('mortgageAmount').value);

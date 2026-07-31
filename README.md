@@ -13,6 +13,7 @@ Tailscale, backed up daily to Google Drive.
 - **Forecast**: Monte Carlo net-worth projection with what-if sliders (horizon, market return, contribution rate)
 - **Quarterly review**: optional LLM-written summary of the newest quarter (see below)
 - **Retirement planner**: models Polish tax wrappers (IKE/IKZE/PPK), ZUS and the pre-60 bridge to project the earliest feasible retirement age
+- **PPK tracking**: entered per quarter alongside cash and mortgage; counts inside the portfolio total and appears as its own tag/account
 - **NBP currency rates** for non-PLN positions
 - **Password-gated** when `DASHBOARD_PASSWORD` is set (disabled in dev mode)
 

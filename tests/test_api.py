@@ -249,3 +249,64 @@ class TestImportCsvGuards:
                            content_type="multipart/form-data")
         assert resp.status_code == 409
         assert "already imported" in resp.get_json()["error"]
+
+
+class TestPpkIntegration:
+    """PPK is entered manually but counts as invested capital, so it is
+    injected as a synthetic position. Every consumer of position lists must
+    use that injection, or views disagree on the portfolio total."""
+
+    @pytest.fixture
+    def snapshot_with_ppk(self, temp_db):
+        sid = db.create_snapshot("2026-Q1", "2026-03-31")
+        db.insert_positions(sid, [{
+            "name": "Fund", "ticker": "F", "isin": None, "account": "Interactive Brokers",
+            "group_name": "g", "currency": "PLN", "tags": "ETF", "value_pln": 100_000.0}])
+        db.save_manual_entries(sid, [
+            {"type": "cash", "label": "Cash", "currency": "PLN",
+             "original_amount": 10_000.0, "amount_pln": 10_000.0},
+            {"type": "ppk", "label": "PPK", "currency": "PLN",
+             "original_amount": 25_000.0, "amount_pln": 25_000.0},
+        ])
+        return sid
+
+    def test_ppk_is_included_in_the_portfolio_total_once(self, client, snapshot_with_ppk):
+        d = client.get("/api/dashboard").get_json()
+        assert d["ppk_total"] == pytest.approx(25_000)
+        assert d["portfolio_total"] == pytest.approx(125_000)
+        # Counted once: portfolio (incl. PPK) + cash, no mortgage.
+        assert d["net_worth"] == pytest.approx(135_000)
+
+    def test_ppk_appears_as_its_own_tag_and_account(self, client, snapshot_with_ppk):
+        d = client.get("/api/dashboard").get_json()
+        assert d["by_tags"]["PPK"] == pytest.approx(25_000)
+        assert d["by_account"]["PPK"] == pytest.approx(25_000)
+
+    def test_timeline_portfolio_total_includes_ppk(self, client, snapshot_with_ppk):
+        d = client.get("/api/dashboard").get_json()
+        row = d["timeline"][-1]
+        assert row["ppk_total"] == pytest.approx(25_000)
+        assert row["portfolio_total"] == pytest.approx(125_000)
+        assert row["net_worth"] == pytest.approx(135_000)
+
+    def test_dashboard_and_compare_agree(self, client, snapshot_with_ppk):
+        """Regression: /api/compare read positions straight from the DB and
+        skipped the injection, so it reported a lower portfolio than the
+        dashboard for the same quarter."""
+        sid2 = db.create_snapshot("2025-Q4", "2025-12-31")
+        db.insert_positions(sid2, [{
+            "name": "Fund", "ticker": "F", "isin": None, "account": "Interactive Brokers",
+            "group_name": "g", "currency": "PLN", "tags": "ETF", "value_pln": 90_000.0}])
+
+        d = client.get("/api/dashboard").get_json()
+        c = client.get("/api/compare").get_json()
+        assert c["totals"]["portfolio"][1] == pytest.approx(d["portfolio_total"])
+        assert c["totals"]["net_worth"][1] == pytest.approx(d["net_worth"])
+        assert any(p["account"] == "PPK" for p in c["positions_b"])
+
+    def test_no_ppk_entry_means_no_ppk_anywhere(self, client, make_snapshot):
+        make_snapshot("2026-Q1", "2026-03-31", portfolio=100_000.0, cash=5_000.0)
+        d = client.get("/api/dashboard").get_json()
+        assert d["ppk_total"] == 0
+        assert "PPK" not in d["by_tags"]
+        assert d["portfolio_total"] == pytest.approx(100_000)

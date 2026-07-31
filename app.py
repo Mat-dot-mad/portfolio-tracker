@@ -91,6 +91,43 @@ def dashboard():
     return render_template("index.html")
 
 
+def _synthetic_ppk_position(snapshot_id, amount):
+    """A PPK balance shaped like a position row.
+
+    PPK is entered manually (it isn't in the broker CSV) but it is invested
+    capital, so representing it as a position lets the breakdown table,
+    treemaps and Compare view treat it as its own tag/account with no
+    special-casing, and keeps portfolio_total consistent with the timeline,
+    which folds ppk_total into its portfolio figure.
+    """
+    return {
+        "id": None,
+        "snapshot_id": snapshot_id,
+        "name": "PPK",
+        "ticker": "PPK",
+        "isin": None,
+        "account": "PPK",
+        "group_name": "PPK",
+        "currency": "PLN",
+        "tags": "PPK",
+        "value_pln": amount,
+        "synthetic": True,
+    }
+
+
+def _inject_ppk_positions(all_positions):
+    """Add the synthetic PPK position to each snapshot that has a balance.
+
+    Every consumer of position lists must go through this, or totals disagree
+    between views — the dashboard would include PPK while Compare would not.
+    """
+    for snapshot_id, amount in db.get_manual_entry_totals_by_type("ppk").items():
+        if amount and snapshot_id in all_positions:
+            all_positions[snapshot_id].append(
+                _synthetic_ppk_position(snapshot_id, amount))
+    return all_positions
+
+
 def _build_dashboard_data():
     """Builds the full dashboard data payload for /api/dashboard."""
     snapshots = db.get_snapshots()  # Ordered by snapshot_date DESC
@@ -101,6 +138,8 @@ def _build_dashboard_data():
     all_positions = {}
     for s in snapshots_asc:
         all_positions[s["id"]] = db.get_positions(s["id"])
+
+    _inject_ppk_positions(all_positions)
 
     # Latest snapshot details
     latest = snapshots[0] if snapshots else None
@@ -119,10 +158,12 @@ def _build_dashboard_data():
         account = p["account"] or "Other"
         by_account[account] = by_account.get(account, 0) + p["value_pln"]
 
-    # Totals from latest
+    # Totals from latest. portfolio_total includes the injected PPK position,
+    # matching how the timeline folds ppk_total into its portfolio figure.
     portfolio_total = sum(p["value_pln"] for p in latest_positions)
     cash_total = sum(e["amount_pln"] for e in latest_manual if e["type"] == "cash")
     mortgage_total = sum(e["amount_pln"] for e in latest_manual if e["type"] == "mortgage")
+    ppk_total = sum(e["amount_pln"] for e in latest_manual if e["type"] == "ppk")
 
     # Annotate the timeline with cash-flow info if any cash flows have been imported.
     # Pre-snapshot history is rolled into the first snapshot (per design: lump it
@@ -174,6 +215,7 @@ def _build_dashboard_data():
         "portfolio_total": portfolio_total,
         "cash_total": cash_total,
         "mortgage_total": mortgage_total,
+        "ppk_total": ppk_total,
         "net_worth": portfolio_total + cash_total - mortgage_total,
         "by_tags": by_tags,
         "by_account": by_account,
@@ -442,8 +484,14 @@ def api_compare():
     if not snap_a or not snap_b:
         return jsonify({"error": "Snapshot not found"}), 404
 
-    positions_a = db.get_positions(id_a)
-    positions_b = db.get_positions(id_b)
+    # Same PPK injection as the dashboard, so both views report the same
+    # portfolio totals.
+    injected = _inject_ppk_positions({
+        id_a: db.get_positions(id_a),
+        id_b: db.get_positions(id_b),
+    })
+    positions_a = injected[id_a]
+    positions_b = injected[id_b]
     manual_a = db.get_manual_entries(id_a)
     manual_b = db.get_manual_entries(id_b)
 
@@ -710,10 +758,14 @@ IKE_ACCOUNT_MARKERS = ("IKE-M", "IKE OBLIGACJE", "IKE")
 
 
 def _classify_account(account):
-    """Return 'ike', 'ikze' or 'taxable' for an account name."""
+    """Return 'ike', 'ikze', 'ppk' or 'taxable' for an account name."""
     if not account:
         return "taxable"
     upper = account.upper()
+    # PPK first: it is age-gated like the others, and treating it as taxable
+    # would wrongly make it spendable during an early-retirement bridge.
+    if upper == "PPK":
+        return "ppk"
     if "IKZE" in upper:
         return "ikze"
     if any(marker in upper for marker in IKE_ACCOUNT_MARKERS):
@@ -730,7 +782,7 @@ def _current_balances(data):
     stated as such in the UI.
     """
     latest = data["latest"]
-    balances = {"taxable": 0.0, "ike": 0.0, "ikze": 0.0}
+    balances = {"taxable": 0.0, "ike": 0.0, "ikze": 0.0, "ppk": 0.0}
     if latest:
         for p in data["all_positions"].get(latest["id"], []):
             balances[_classify_account(p["account"])] += p["value_pln"]
@@ -805,7 +857,9 @@ def _retirement_params(settings, data):
         "start_ike_basis": balances["ike"] * basis_ratio,
         "start_ikze": balances["ikze"],
         "start_ikze_basis": balances["ikze"] * basis_ratio,
-        "start_ppk": num("start_ppk"),
+        # Prefer the quarterly-tracked PPK balance over the stored setting, so
+        # it stays current with each import instead of needing a manual edit.
+        "start_ppk": balances["ppk"] or num("start_ppk"),
     })
     return params, balances, basis_ratio
 
