@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Retirement — Portfolio Tracker</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+    <style>
+        .chart-container { position: relative; height: 380px; }
+        .card-value { font-size: 1.5rem; font-weight: 700; }
+        .card-label { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--bs-secondary-color); }
+        .card-detail { font-size: 0.85rem; color: var(--bs-secondary-color); }
+        .text-positive { color: #198754; }
+        .text-negative { color: #dc3545; }
+        #loading { text-align: center; padding: 4rem 0; }
+        .setting-row label { font-size: 0.85rem; margin-bottom: 0.15rem; }
+        .setting-row input, .setting-row select { font-size: 0.9rem; }
+        .setting-note { font-size: 0.75rem; color: var(--bs-secondary-color); }
+        .bucket-bar { height: 26px; border-radius: 4px; overflow: hidden; display: flex; }
+        .bucket-bar span { display: flex; align-items: center; justify-content: center;
+                           font-size: 0.72rem; color: #fff; white-space: nowrap; }
+    </style>
+</head>
+<body>
+
+<nav class="navbar navbar-dark bg-dark mb-4">
+    <div class="container">
+        <span class="navbar-brand mb-0 h1">Portfolio Tracker</span>
+        <div class="d-flex align-items-center gap-2">
+            <a href="/" class="btn btn-sm btn-outline-light">Dashboard</a>
+            <a href="/compare" class="btn btn-sm btn-outline-light">Compare</a>
+            <a href="/forecast" class="btn btn-sm btn-outline-light">Forecast</a>
+            <a href="/retirement" class="btn btn-sm btn-outline-light active">Retirement</a>
+            <button class="btn btn-sm btn-outline-light" id="themeToggle" onclick="toggleTheme()">Dark</button>
+        </div>
+    </div>
+</nav>
+
+<div class="container" id="app">
+    <div id="loading">Loading…</div>
+</div>
+
+<template id="retirement-template">
+<div>
+    <h4 class="mb-1">Retirement</h4>
+    <p class="text-muted small mb-4">
+        A projection of what your assumptions imply — not financial advice, and not a
+        recommendation to retire at any particular age. All figures are in
+        <strong>today's money</strong>, so returns are real (after inflation) and
+        spending stays constant in real terms.
+    </p>
+
+    <!-- Headline results -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-4">
+            <div class="card h-100">
+                <div class="card-body">
+                    <div class="card-label">Earliest feasible age</div>
+                    <div class="card-value" id="earliest-age">—</div>
+                    <div class="card-detail" id="earliest-detail"></div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card h-100">
+                <div class="card-body">
+                    <div class="card-label">Success at chosen age</div>
+                    <div class="card-value" id="chosen-rate">—</div>
+                    <div class="card-detail" id="chosen-detail"></div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card h-100">
+                <div class="card-body">
+                    <div class="card-label">Sustainable spend at chosen age</div>
+                    <div class="card-value" id="sustainable">—</div>
+                    <div class="card-detail">per year, today's money</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Accessibility of current capital -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <h5 class="card-title">What you can actually reach, and when</h5>
+            <p class="text-muted small mb-2" id="bucket-summary"></p>
+            <div class="bucket-bar mb-2" id="bucket-bar"></div>
+            <p class="setting-note mb-0">
+                Retiring before the IKE age means bridging on the taxable portion alone.
+                A plan can look fully funded on total net worth and still fail on that bridge.
+            </p>
+        </div>
+    </div>
+
+    <!-- Projection chart -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <h5 class="card-title">Projected capital</h5>
+            <div class="text-muted small mb-3" id="chart-note"></div>
+            <div class="chart-container"><canvas id="retirement-chart"></canvas></div>
+        </div>
+    </div>
+
+    <!-- Settings -->
+    <div class="card mb-4">
+        <div class="card-header bg-transparent d-flex justify-content-between align-items-center"
+             style="cursor:pointer;" data-bs-toggle="collapse" data-bs-target="#settingsBody">
+            <h5 class="mb-0">Your details &amp; assumptions</h5>
+            <span class="text-muted small">click to expand</span>
+        </div>
+        <div class="collapse show" id="settingsBody">
+            <div class="card-body">
+
+                <h6 class="mb-2">About you</h6>
+                <div class="row g-3 setting-row mb-3">
+                    <div class="col-md-3"><label for="current_age">Current age</label>
+                        <input type="number" class="form-control form-control-sm" id="current_age"></div>
+                    <div class="col-md-3"><label for="retirement_age">Planned retirement age</label>
+                        <input type="number" class="form-control form-control-sm" id="retirement_age"></div>
+                    <div class="col-md-3"><label for="horizon_age">Plan until age</label>
+                        <input type="number" class="form-control form-control-sm" id="horizon_age"></div>
+                    <div class="col-md-3"><label for="success_threshold">Required success rate</label>
+                        <input type="number" step="0.01" class="form-control form-control-sm" id="success_threshold">
+                        <div class="setting-note">0.90 = plan must survive in 90% of runs</div></div>
+                    <div class="col-md-3"><label for="annual_spending">Annual spending in retirement</label>
+                        <input type="number" class="form-control form-control-sm" id="annual_spending">
+                        <div class="setting-note">today's money</div></div>
+                    <div class="col-md-3"><label for="annual_savings">Annual savings until then</label>
+                        <input type="number" class="form-control form-control-sm" id="annual_savings">
+                        <div class="setting-note">excludes PPK, which comes from salary</div></div>
+                </div>
+
+                <h6 class="mb-2">ZUS</h6>
+                <div class="row g-3 setting-row mb-3">
+                    <div class="col-md-3"><label for="zus_annual">Projected pension, per year</label>
+                        <input type="number" class="form-control form-control-sm" id="zus_annual">
+                        <div class="setting-note">from your ZUS letter / PUE, in today's money</div></div>
+                    <div class="col-md-3"><label for="zus_start_age">Starts at age</label>
+                        <input type="number" class="form-control form-control-sm" id="zus_start_age"></div>
+                </div>
+
+                <h6 class="mb-2">PPK</h6>
+                <div class="row g-3 setting-row mb-3">
+                    <div class="col-md-3"><label for="ppk_enabled">Contributing?</label>
+                        <select class="form-select form-select-sm" id="ppk_enabled">
+                            <option value="1">Yes</option><option value="0">No</option></select></div>
+                    <div class="col-md-3"><label for="start_ppk">Current PPK balance</label>
+                        <input type="number" class="form-control form-control-sm" id="start_ppk">
+                        <div class="setting-note">not tracked elsewhere in the app</div></div>
+                    <div class="col-md-3"><label for="ppk_gross_salary">Gross annual salary</label>
+                        <input type="number" class="form-control form-control-sm" id="ppk_gross_salary"></div>
+                    <div class="col-md-3"><label for="ppk_employee_rate">Your rate</label>
+                        <input type="number" step="0.001" class="form-control form-control-sm" id="ppk_employee_rate"></div>
+                    <div class="col-md-3"><label for="ppk_employer_rate">Employer rate</label>
+                        <input type="number" step="0.001" class="form-control form-control-sm" id="ppk_employer_rate"></div>
+                    <div class="col-md-3"><label for="ppk_state_annual">State top-up per year</label>
+                        <input type="number" class="form-control form-control-sm" id="ppk_state_annual"></div>
+                    <div class="col-md-3"><label for="ppk_access_age">Payout age</label>
+                        <input type="number" class="form-control form-control-sm" id="ppk_access_age"></div>
+                    <div class="col-md-3"><label for="ppk_lump_sum_fraction">Lump sum share</label>
+                        <input type="number" step="0.01" class="form-control form-control-sm" id="ppk_lump_sum_fraction"></div>
+                    <div class="col-md-3"><label for="ppk_installment_years">Installments over (years)</label>
+                        <input type="number" class="form-control form-control-sm" id="ppk_installment_years"></div>
+                </div>
+
+                <h6 class="mb-1">Polish rules</h6>
+                <div class="alert alert-warning py-2 small mb-2">
+                    These defaults reflect the general framework but limits are set annually
+                    and rates can change. <strong>Verify each against current rules</strong> —
+                    a stale figure here changes the answer without any visible sign.
+                </div>
+                <div class="row g-3 setting-row mb-3">
+                    <div class="col-md-3"><label for="ike_access_age">IKE accessible from</label>
+                        <input type="number" class="form-control form-control-sm" id="ike_access_age"></div>
+                    <div class="col-md-3"><label for="ikze_access_age">IKZE accessible from</label>
+                        <input type="number" class="form-control form-control-sm" id="ikze_access_age"></div>
+                    <div class="col-md-3"><label for="belka_rate">Belka rate (on gains)</label>
+                        <input type="number" step="0.01" class="form-control form-control-sm" id="belka_rate"></div>
+                    <div class="col-md-3"><label for="ikze_withdrawal_rate">IKZE withdrawal rate</label>
+                        <input type="number" step="0.01" class="form-control form-control-sm" id="ikze_withdrawal_rate">
+                        <div class="setting-note">flat, on the whole withdrawal</div></div>
+                    <div class="col-md-3"><label for="ike_annual_limit">IKE annual limit</label>
+                        <input type="number" class="form-control form-control-sm" id="ike_annual_limit"></div>
+                    <div class="col-md-3"><label for="ikze_annual_limit">IKZE annual limit</label>
+                        <input type="number" class="form-control form-control-sm" id="ikze_annual_limit"></div>
+                </div>
+
+                <h6 class="mb-2">Market assumptions</h6>
+                <div class="row g-3 setting-row mb-3">
+                    <div class="col-md-3"><label for="use_historical_returns">Return source</label>
+                        <select class="form-select form-select-sm" id="use_historical_returns">
+                            <option value="1">Bootstrap my history</option>
+                            <option value="0">Fixed rate</option></select></div>
+                    <div class="col-md-3"><label for="inflation_rate">Assumed inflation</label>
+                        <input type="number" step="0.001" class="form-control form-control-sm" id="inflation_rate">
+                        <div class="setting-note">used to convert returns to real terms</div></div>
+                    <div class="col-md-3"><label for="expected_real_return">Fixed real return</label>
+                        <input type="number" step="0.001" class="form-control form-control-sm" id="expected_real_return">
+                        <div class="setting-note">used only when source is "Fixed rate"</div></div>
+                </div>
+
+                <button class="btn btn-primary" id="save-btn" onclick="saveAndRecalculate()">Save &amp; recalculate</button>
+                <span class="ms-2 small text-muted" id="save-status"></span>
+            </div>
+        </div>
+    </div>
+</div>
+</template>
+
+<script src="{{ url_for('static', filename='common.js') }}"></script>
+<script src="{{ url_for('static', filename='retirement.js') }}"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

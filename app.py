@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import json
 import os
+import random
 import re
 
 from flask import Flask, render_template, request, redirect, url_for, jsonify, session
@@ -10,6 +11,7 @@ import db
 import gemini
 import nbp
 import import_data
+import retirement
 
 app = Flask(__name__)
 # SECRET_KEY signs the session cookie so the browser cannot forge "authenticated".
@@ -662,6 +664,211 @@ def api_import_cashflows():
         })
     finally:
         os.unlink(tmp.name)
+
+
+# --- Retirement planner ---------------------------------------------------
+#
+# Projection only. It computes the arithmetic consequences of assumptions the
+# user supplies and makes no recommendation. Every Polish rule is a stored
+# setting rather than a constant, because limits and rates change annually.
+
+# Defaults are a starting point, NOT authority. The UI labels them as needing
+# verification against current rules, and they are stored per-user on first
+# save so a stale default here cannot silently override a corrected value.
+RETIREMENT_DEFAULTS = {
+    "current_age": 40,
+    "retirement_age": 60,
+    "horizon_age": 90,
+    "annual_spending": 120000,
+    "annual_savings": 100000,
+    "ike_access_age": 60,
+    "ikze_access_age": 65,
+    "belka_rate": 0.19,
+    "ikze_withdrawal_rate": 0.10,
+    "ike_annual_limit": 26019,
+    "ikze_annual_limit": 10407,
+    "zus_annual": 0,
+    "zus_start_age": 65,
+    "ppk_enabled": 0,
+    "ppk_gross_salary": 0,
+    "ppk_employee_rate": 0.02,
+    "ppk_employer_rate": 0.015,
+    "ppk_state_annual": 240,
+    "ppk_access_age": 60,
+    "ppk_lump_sum_fraction": 0.25,
+    "ppk_installment_years": 10,
+    "start_ppk": 0,
+    "inflation_rate": 0.035,
+    "expected_real_return": 0.05,
+    "use_historical_returns": 1,
+    "success_threshold": 0.90,
+}
+
+# Which tax wrapper each account belongs to. Mirrors getRetirementType() in
+# static/common.js — IKE-M is maklerskie IKE and shares its tax treatment.
+IKE_ACCOUNT_MARKERS = ("IKE-M", "IKE OBLIGACJE", "IKE")
+
+
+def _classify_account(account):
+    """Return 'ike', 'ikze' or 'taxable' for an account name."""
+    if not account:
+        return "taxable"
+    upper = account.upper()
+    if "IKZE" in upper:
+        return "ikze"
+    if any(marker in upper for marker in IKE_ACCOUNT_MARKERS):
+        return "ike"
+    return "taxable"
+
+
+def _current_balances(data):
+    """Split the newest snapshot across wrappers, with an estimated cost basis.
+
+    Basis matters because Belka is charged on gains only. Per-account basis
+    isn't tracked, so the portfolio-wide ratio (net invested / current value)
+    from the cash-flow import is applied to every bucket. Approximate, and
+    stated as such in the UI.
+    """
+    latest = data["latest"]
+    balances = {"taxable": 0.0, "ike": 0.0, "ikze": 0.0}
+    if latest:
+        for p in data["all_positions"].get(latest["id"], []):
+            balances[_classify_account(p["account"])] += p["value_pln"]
+
+    # Cash is spendable immediately, so it belongs with the taxable pot.
+    balances["taxable"] += data["cash_total"]
+
+    lifetime = data["lifetime"]
+    total = sum(balances.values())
+    if lifetime.get("available") and total > 0:
+        basis_ratio = min(1.0, max(0.0, lifetime["net_invested"] / total))
+    else:
+        basis_ratio = 1.0   # unknown basis -> assume no taxable gain
+
+    return balances, basis_ratio
+
+
+def _real_return_pool(data, inflation_rate, size=2000, seed=12345):
+    """Annual REAL returns to bootstrap from.
+
+    Quarterly net-worth market returns (contributions removed, as on the
+    forecast page) are deflated to real terms, then sampled in groups of four
+    and compounded. Sampling quarters rather than whole years keeps the sample
+    size usable — 18 quarters would otherwise yield only four annual figures.
+    """
+    timeline = data["timeline"]
+    quarterly = []
+    for i in range(1, len(timeline)):
+        prev, curr = timeline[i - 1], timeline[i]
+        prev_nw = prev["portfolio_total"] + prev["cash_total"] - prev["mortgage_total"]
+        curr_nw = curr["portfolio_total"] + curr["cash_total"] - curr["mortgage_total"]
+        if prev_nw <= 0:
+            continue
+        contrib = curr.get("net_contributions") or 0
+        quarterly.append((curr_nw - prev_nw - contrib) / prev_nw)
+
+    if not quarterly:
+        return None
+
+    q_inflation = (1 + inflation_rate) ** 0.25 - 1
+    real_q = [(1 + r) / (1 + q_inflation) - 1 for r in quarterly]
+
+    rng = random.Random(seed)
+    pool = []
+    for _ in range(size):
+        year = 1.0
+        for _ in range(4):
+            year *= (1 + real_q[rng.randrange(len(real_q))])
+        pool.append(year - 1)
+    return pool
+
+
+def _retirement_params(settings, data):
+    """Merge stored settings with live portfolio balances into engine params."""
+    def num(key):
+        raw = settings.get(key, RETIREMENT_DEFAULTS[key])
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return float(RETIREMENT_DEFAULTS[key])
+
+    balances, basis_ratio = _current_balances(data)
+
+    params = {k: num(k) for k in RETIREMENT_DEFAULTS}
+    params["ppk_enabled"] = bool(num("ppk_enabled"))
+    params["ppk_installment_years"] = int(num("ppk_installment_years"))
+
+    params.update({
+        "start_taxable": balances["taxable"],
+        "start_taxable_basis": balances["taxable"] * basis_ratio,
+        "start_ike": balances["ike"],
+        "start_ike_basis": balances["ike"] * basis_ratio,
+        "start_ikze": balances["ikze"],
+        "start_ikze_basis": balances["ikze"] * basis_ratio,
+        "start_ppk": num("start_ppk"),
+    })
+    return params, balances, basis_ratio
+
+
+@app.route("/retirement")
+def retirement_page():
+    return render_template("retirement.html")
+
+
+@app.route("/api/retirement", methods=["GET"])
+def api_retirement():
+    """Run the planner with the stored settings."""
+    data = _build_dashboard_data()
+    if not data["timeline"]:
+        return jsonify({"available": False, "reason": "No snapshots yet"})
+
+    settings = db.get_retirement_settings()
+    params, balances, basis_ratio = _retirement_params(settings, data)
+
+    if params["use_historical_returns"]:
+        returns = _real_return_pool(data, params["inflation_rate"])
+        return_source = "historical (real)"
+    else:
+        returns = None
+        return_source = "fixed"
+    if not returns:
+        returns = [params["expected_real_return"]]
+        return_source = "fixed"
+
+    threshold = params["success_threshold"]
+    age, rate = retirement.earliest_feasible_age(
+        params, returns, threshold=threshold, paths=300,
+        min_age=int(params["current_age"]) + 1, max_age=75, seed=42)
+
+    chosen = retirement.success_rate(params, returns, paths=300, seed=42)
+    sustainable = retirement.sustainable_spending(
+        params, returns, threshold=threshold, paths=200, seed=42)
+    path = retirement.median_path(params, returns, paths=200, seed=42)
+
+    return jsonify({
+        "available": True,
+        "settings": {k: settings.get(k, v) for k, v in RETIREMENT_DEFAULTS.items()},
+        "balances": balances,
+        "basis_ratio": round(basis_ratio, 3),
+        "return_source": return_source,
+        "mean_real_return": round(sum(returns) / len(returns), 4),
+        "earliest_feasible_age": age,
+        "earliest_feasible_rate": round(rate, 3),
+        "chosen_age_success_rate": round(chosen, 3),
+        "sustainable_spending_at_chosen_age": round(sustainable, -2),
+        "path": path,
+    })
+
+
+@app.route("/api/retirement", methods=["POST"])
+def api_save_retirement():
+    payload = request.get_json() or {}
+    # Only persist keys the planner knows about, so a malformed request can't
+    # pollute the settings table.
+    known = {k: v for k, v in payload.items() if k in RETIREMENT_DEFAULTS}
+    if known:
+        db.save_retirement_settings(known)
+    return jsonify({"ok": True, "saved": sorted(known)})
 
 
 def create_app():

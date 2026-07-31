@@ -75,6 +75,15 @@ def init_db():
                 payload_hash TEXT NOT NULL,
                 text         TEXT NOT NULL
             );
+
+            -- Retirement planner inputs. Key/value because the planner has
+            -- ~25 parameters (personal, PPK, Polish tax rules, assumptions)
+            -- and they change independently; columns would mean a migration
+            -- every time one is added.
+            CREATE TABLE IF NOT EXISTS retirement_settings (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
         """)
 
 
@@ -340,4 +349,23 @@ def save_commentary(snapshot_id, text, model, payload_hash):
                  payload_hash = excluded.payload_hash,
                  text         = excluded.text""",
             (snapshot_id, datetime.now().isoformat(), model, payload_hash, text),
+        )
+
+
+# ── Retirement planner settings ──────────────────────
+
+def get_retirement_settings():
+    """All saved planner settings as a plain dict (values are strings)."""
+    with get_db() as conn:
+        rows = conn.execute("SELECT key, value FROM retirement_settings").fetchall()
+    return {r["key"]: r["value"] for r in rows}
+
+
+def save_retirement_settings(settings):
+    """Upsert the supplied keys. Keys not present are left untouched."""
+    with get_db() as conn:
+        conn.executemany(
+            """INSERT INTO retirement_settings (key, value) VALUES (?, ?)
+               ON CONFLICT(key) DO UPDATE SET value = excluded.value""",
+            [(k, str(v)) for k, v in settings.items()],
         )

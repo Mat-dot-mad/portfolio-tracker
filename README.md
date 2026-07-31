@@ -12,6 +12,7 @@ Tailscale, backed up daily to Google Drive.
 - **Compare view**: diff any two quarters side-by-side, with change-by-tag and net-worth-bridge charts
 - **Forecast**: Monte Carlo net-worth projection with what-if sliders (horizon, market return, contribution rate)
 - **Quarterly review**: optional LLM-written summary of the newest quarter (see below)
+- **Retirement planner**: models Polish tax wrappers (IKE/IKZE/PPK), ZUS and the pre-60 bridge to project the earliest feasible retirement age
 - **NBP currency rates** for non-PLN positions
 - **Password-gated** when `DASHBOARD_PASSWORD` is set (disabled in dev mode)
 
@@ -23,6 +24,7 @@ Tailscale, backed up daily to Google Drive.
 | `db.py` | SQLite schema + helpers (DB path from `DATABASE_PATH` env var) |
 | `nbp.py` | NBP currency-rate fetcher |
 | `gemini.py` | Gemini API client for the quarterly review (optional feature) |
+| `retirement.py` | Retirement simulation engine (age gating, wrapper taxes, ZUS, PPK) |
 | `import_data.py` | myFund CSV parser |
 | `static/common.js` | Helpers shared by all pages (`formatPLN`, account badges, theme) |
 | `static/app.js`, `static/compare.js`, `static/forecast.js` | Dashboard, Compare, and Forecast frontends |
