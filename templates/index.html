@@ -160,13 +160,16 @@
                 <span class="small">to</span>
                 <select id="filterTo" class="form-select form-select-sm" style="width: auto;"></select>
                 <span class="small ms-3 fw-semibold">Account:</span>
-                <select id="filterAccount" class="form-select form-select-sm" style="width: auto;">
-                    <option value="">All</option>
-                    <option value="IKE">IKE only</option>
-                    <option value="IKE-M">IKE-M only</option>
-                    <option value="IKZE">IKZE only</option>
+                <select id="filterAccount" class="form-select form-select-sm" multiple size="6"
+                        style="width: auto; min-width: 15rem;">
+                    <option value="IKE">IKE</option>
+                    <option value="IKE-M">IKE-M</option>
+                    <option value="IKZE">IKZE</option>
                     <option value="RETIREMENT">All retirement (IKE + IKE-M + IKZE)</option>
+                    <option value="PPK">PPK</option>
+                    <option value="TAXABLE">Taxable (non-retirement)</option>
                 </select>
+                <span class="setting-note text-muted small">ctrl/cmd-click for several; none = all</span>
             </div>
 
             <div class="table-responsive">

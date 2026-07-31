@@ -158,10 +158,23 @@ function renderChart(d) {
 
 // ── Settings form ───────────────────────────────────
 
-function fillForm(settings) {
+function fillForm(settings, data) {
     for (const key of SETTING_KEYS) {
         const el = document.getElementById(key);
         if (el) el.value = settings[key];
+    }
+
+    // When PPK is tracked quarterly, that balance wins and the field becomes
+    // read-only — two editable copies of the same number would silently drift.
+    const ppkEl = document.getElementById('start_ppk');
+    const note = document.getElementById('start_ppk_note');
+    if (ppkEl && data && data.ppk_from_snapshot) {
+        ppkEl.value = Math.round(data.ppk_from_snapshot);
+        ppkEl.readOnly = true;
+        ppkEl.classList.add('bg-body-secondary');
+        if (note) note.textContent = 'from the latest Quarterly Entry';
+    } else if (note) {
+        note.textContent = 'no quarterly PPK entry yet — enter it on the Dashboard';
     }
 }
 
@@ -232,7 +245,7 @@ async function loadRetirement() {
     if (btn) btn.textContent =
         document.documentElement.getAttribute('data-bs-theme') === 'dark' ? 'Light' : 'Dark';
 
-    fillForm(data.settings);
+    fillForm(data.settings, data);
     renderResults(data);
     renderChart(data);
 }

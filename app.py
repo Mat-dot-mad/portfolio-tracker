@@ -739,14 +739,17 @@ RETIREMENT_DEFAULTS = {
     "ikze_access_age": 65,
     "belka_rate": 0.19,
     "ikze_withdrawal_rate": 0.10,
-    "ike_annual_limit": 26019,
-    "ikze_annual_limit": 10407,
+    # 2026 limits: IKE is 3x the projected average monthly wage (9,420 zl),
+    # IKZE 1.2x for employees. Self-employed IKZE is higher at 1.8x
+    # (16,956 zl) — override in the settings form if that applies.
+    "ike_annual_limit": 28260,
+    "ikze_annual_limit": 11304,
     "zus_annual": 0,
     "zus_start_age": 65,
-    "ppk_enabled": 0,
+    "ppk_enabled": 1,
     "ppk_gross_salary": 0,
-    "ppk_employee_rate": 0.02,
-    "ppk_employer_rate": 0.015,
+    "ppk_employee_rate": 0.04,
+    "ppk_employer_rate": 0.04,
     "ppk_state_annual": 240,
     "ppk_access_age": 60,
     "ppk_lump_sum_fraction": 0.25,
@@ -911,6 +914,9 @@ def api_retirement():
         "balances": balances,
         "basis_ratio": round(basis_ratio, 3),
         "return_source": return_source,
+        # Non-null when a PPK balance is tracked in Quarterly Entry; the UI
+        # shows the field as read-only in that case so the two can't drift.
+        "ppk_from_snapshot": balances["ppk"] or None,
         "mean_real_return": round(sum(returns) / len(returns), 4),
         "earliest_feasible_age": age,
         "earliest_feasible_rate": round(rate, 3),

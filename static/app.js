@@ -360,7 +360,7 @@ let breakdownState = {
     sortAsc: true,
     fromIdx: 0,
     toIdx: 0,
-    accountFilter: '',
+    accountFilter: [],   // multi-select; empty means no filter
     expandedGroups: new Set(),
     quarters: [],
     groupData: [],
@@ -448,7 +448,9 @@ function initBreakdownTable() {
 
     const filterAccount = document.getElementById('filterAccount');
     filterAccount.addEventListener('change', () => {
-        breakdownState.accountFilter = filterAccount.value;
+        // Multi-select: collect every chosen option. Empty means no filter.
+        breakdownState.accountFilter =
+            [...filterAccount.selectedOptions].map(o => o.value).filter(Boolean);
         renderBreakdownTable();
     });
 
@@ -457,10 +459,19 @@ function initBreakdownTable() {
 
 function matchesAccountFilter(account) {
     const filter = breakdownState.accountFilter;
-    if (!filter) return true;
+    // Nothing selected means no filtering, matching the old empty-string
+    // "All" behaviour.
+    if (!filter || filter.length === 0) return true;
+
     const type = getRetirementType(account);
-    if (filter === 'RETIREMENT') return type !== null;
-    return type === filter;
+    // Any selected entry matching is enough (OR), so picking IKE and IKZE
+    // shows both rather than nothing.
+    return filter.some(f => {
+        if (f === 'RETIREMENT') return type !== null;
+        if (f === 'TAXABLE') return type === null && account !== 'PPK';
+        if (f === 'PPK') return account === 'PPK';
+        return type === f;
+    });
 }
 
 function getVisibleQuarters() {
