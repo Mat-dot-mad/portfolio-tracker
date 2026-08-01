@@ -35,6 +35,17 @@
         .bucket-bar { height: 26px; border-radius: 4px; overflow: hidden; display: flex; }
         .bucket-bar span { display: flex; align-items: center; justify-content: center;
                            font-size: 0.72rem; color: #fff; white-space: nowrap; }
+
+        /* Projection table */
+        .projection-table { font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+        .projection-table td, .projection-table th { padding: 0.3rem 0.5rem; white-space: nowrap; }
+        .projection-table thead th { background: var(--bs-body-bg); }
+        .projection-table td.num, .projection-table th.num { text-align: right; }
+        .projection-table tr.retired td { background: rgba(13, 110, 253, 0.05); }
+        .projection-table tr.short td { background: rgba(220, 53, 69, 0.13); }
+        .projection-table td.locked { color: var(--bs-secondary-color); }
+        .projection-table tr.milestone td { border-top: 2px solid var(--bs-border-color); }
+        .split-chip { font-size: 0.75rem; }
     </style>
 </head>
 <body>
@@ -117,6 +128,27 @@
             <h5 class="card-title">Projected capital</h5>
             <div class="text-muted small mb-3" id="chart-note"></div>
             <div class="chart-container"><canvas id="retirement-chart"></canvas></div>
+        </div>
+    </div>
+
+    <!-- Year-by-year detail, for checking where the projection goes -->
+    <div class="card mb-4">
+        <div class="card-header bg-transparent d-flex justify-content-between align-items-center"
+             style="cursor:pointer;" data-bs-toggle="collapse" data-bs-target="#projectionBody">
+            <h5 class="mb-0">Year-by-year projection</h5>
+            <span class="text-muted small">click to expand</span>
+        </div>
+        <div class="collapse" id="projectionBody">
+            <div class="card-body">
+                <div class="text-muted small mb-3" id="projection-note"></div>
+                <div id="account-split" class="mb-3"></div>
+                <div class="table-responsive" style="max-height: 30rem; overflow-y: auto;">
+                    <table class="table table-sm projection-table mb-0">
+                        <thead class="sticky-top" id="projection-head"></thead>
+                        <tbody id="projection-body"></tbody>
+                    </table>
+                </div>
+            </div>
         </div>
     </div>
 

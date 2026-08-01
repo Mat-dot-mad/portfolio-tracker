@@ -432,6 +432,89 @@ class TestDerivedSavingRate:
             body["contribution_rate_8q"], abs=100)
 
 
+class TestProjectionTable:
+    """The year-by-year table must be reconcilable by hand, or it is useless
+    for the troubleshooting it exists to support."""
+
+    def _params(self, **kw):
+        base = dict(current_age=40, retirement_age=55, horizon_age=80,
+                    annual_spending=120_000.0, annual_savings=60_000.0,
+                    zus_annual=40_000.0, zus_start_age=65,
+                    start_taxable=800_000.0, start_taxable_basis=500_000.0,
+                    start_ike=400_000.0, start_ike_basis=250_000.0)
+        base.update(kw)
+        return make_params(**base)
+
+    def test_every_row_reconciles(self):
+        """spending = income + funded from capital + shortfall."""
+        run = retirement.representative_run(self._params(), [0.04], paths=20, seed=3)
+        assert run
+        for row in run:
+            assert row["spending"] == pytest.approx(
+                row["income"] + row["funded_from_capital"] + row["shortfall"], abs=1.0)
+
+    def test_bucket_columns_sum_to_the_total(self):
+        run = retirement.representative_run(self._params(), [0.04], paths=20, seed=3)
+        for row in run:
+            assert row["total"] == pytest.approx(
+                row["taxable"] + row["ike"] + row["ikze"] + row["ppk"], abs=1.0)
+
+    def test_covers_the_whole_horizon_including_failures(self):
+        params = self._params(annual_spending=400_000.0)   # certain to fail
+        run = retirement.representative_run(params, [0.04], paths=20, seed=3)
+        assert run[0]["age"] == params["current_age"]
+        assert run[-1]["age"] == params["horizon_age"] - 1
+        assert any(r["shortfall"] > 1 for r in run)
+
+    def test_nothing_is_paid_in_after_retiring(self):
+        params = self._params()
+        run = retirement.representative_run(params, [0.04], paths=20, seed=3)
+        after = [r for r in run if r["age"] >= params["retirement_age"]]
+        assert after
+        assert all(r["contributions"] == 0 for r in after)
+
+    def test_a_fixed_rate_makes_every_run_identical(self):
+        """With no randomness the 'representative' choice must be moot."""
+        params = self._params()
+        a = retirement.representative_run(params, [0.04], paths=5, seed=1)
+        b = retirement.representative_run(params, [0.04], paths=5, seed=99)
+        assert [r["total"] for r in a] == pytest.approx([r["total"] for r in b])
+
+    def test_zus_shows_up_as_income_only_from_its_start_age(self):
+        params = self._params()
+        run = retirement.representative_run(params, [0.04], paths=20, seed=3)
+        retired_before = [r for r in run
+                          if params["retirement_age"] <= r["age"] < params["zus_start_age"]]
+        assert retired_before
+        assert all(r["income"] == 0 for r in retired_before)
+        at_zus = next(r for r in run if r["age"] == params["zus_start_age"])
+        assert at_zus["income"] == pytest.approx(params["zus_annual"])
+
+    def test_api_exposes_the_projection_and_the_account_split(self, client, make_snapshot):
+        import db as db_module
+        sid = db_module.create_snapshot("2026-Q1", "2026-03-31")
+        db_module.insert_positions(sid, [
+            {"name": "A", "ticker": "A", "isin": None, "account": "mBank IKE-M",
+             "group_name": "g", "currency": "PLN", "tags": "ETF", "value_pln": 100_000.0},
+            {"name": "B", "ticker": "B", "isin": None, "account": "XTB IKE",
+             "group_name": "g", "currency": "PLN", "tags": "ETF", "value_pln": 50_000.0},
+            {"name": "C", "ticker": "C", "isin": None, "account": "Interactive Brokers",
+             "group_name": "g", "currency": "PLN", "tags": "ETF", "value_pln": 30_000.0},
+        ])
+        body = client.get("/api/retirement").get_json()
+
+        assert body["projection"]
+        assert {"age", "taxable", "ike", "ikze", "ppk", "total", "reachable",
+                "shortfall", "contributions", "spending", "income",
+                "funded_from_capital"} <= set(body["projection"][0])
+
+        split = {r["account"]: r for r in body["balances_by_account"]}
+        # IKE-M is its own account but the same wrapper, so it simulates as IKE.
+        assert split["mBank IKE-M"]["bucket"] == "ike"
+        assert split["XTB IKE"]["bucket"] == "ike"
+        assert split["Interactive Brokers"]["bucket"] == "taxable"
+
+
 class TestReturnPoolExcludesPPK:
     """PPK contributions must not be scored as market return.
 

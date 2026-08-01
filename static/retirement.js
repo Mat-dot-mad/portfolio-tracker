@@ -194,6 +194,7 @@ function renderResults(d) {
         formatPLN(d.sustainable_spending_at_chosen_age);
 
     renderBuckets(d);
+    renderProjectionTable(d);
 
     document.getElementById('chart-note').innerHTML =
         `<strong class="text-positive">Spendable now</strong> is what you can actually reach ` +
@@ -241,6 +242,119 @@ function renderBuckets(d) {
         ((b.ppk || 0) > 0 ? ` · <strong>${formatPLN(b.ppk)}</strong> PPK from age ${s.ppk_access_age}` : '') + '. ' +
         `That is ${formatPct(locked / total)} of capital behind an age gate. ` +
         `Cost basis is estimated at ${formatPct(d.basis_ratio)} of value, so Belka applies to the rest.`;
+}
+
+// ── Year-by-year projection table ───────────────────
+
+const BUCKET_LABELS = { taxable: 'Taxable', ike: 'IKE', ikze: 'IKZE', ppk: 'PPK' };
+
+// Where the money sits today, by account. The engine has four buckets, so
+// IKE-M and IKE Obligacje are simulated as IKE — same wrapper, same age gate,
+// same tax. Listing the accounts here means the table can say so, rather than
+// looking as though an account went missing.
+function renderAccountSplit(d) {
+    const el = document.getElementById('account-split');
+    if (!el) return;
+    const rows = d.balances_by_account || [];
+    if (!rows.length) { el.innerHTML = ''; return; }
+
+    const grouped = {};
+    for (const r of rows) (grouped[r.bucket] = grouped[r.bucket] || []).push(r);
+
+    const parts = Object.entries(grouped).map(([bucket, accounts]) => {
+        const names = accounts
+            .map(a => `${a.account} ${formatPLN(a.value)}`)
+            .join(' · ');
+        return `<div class="split-chip"><strong>${BUCKET_LABELS[bucket] || bucket}</strong>` +
+               ` ← ${names}</div>`;
+    });
+
+    const ikeAccounts = (grouped.ike || []).length;
+    const note = ikeAccounts > 1
+        ? `<div class="split-chip text-muted mt-1">Those ${ikeAccounts} IKE accounts share one ` +
+          `age gate and one tax treatment, so the projection tracks them as a single IKE column.</div>`
+        : '';
+
+    el.innerHTML = `<div class="mb-1 fw-semibold small">Starting balances by account</div>` +
+                   parts.join('') + note;
+}
+
+function renderProjectionTable(d) {
+    renderAccountSplit(d);
+
+    const head = document.getElementById('projection-head');
+    const body = document.getElementById('projection-body');
+    const note = document.getElementById('projection-note');
+    if (!head || !body) return;
+
+    const rows = d.projection || [];
+    const s = d.settings;
+    const retireAge = Number(s.retirement_age);
+    const gates = {
+        ike: Number(s.ike_access_age),
+        ikze: Number(s.ikze_access_age),
+        ppk: Number(s.ppk_access_age),
+    };
+    const zusAge = Number(s.zus_start_age);
+
+    if (note) {
+        note.innerHTML =
+            `One complete run — the one whose ending capital is the median — so every row ` +
+            `reconciles: <em>spending = income + from capital + shortfall</em>. ` +
+            `Per-bucket medians would come from different runs and would not add up.<br>` +
+            (d.return_source === 'fixed'
+                ? `Returns are fixed, so this is the only path the model produces.`
+                : `Returns are resampled from your history, so another run would differ; ` +
+                  `the chart's bands show that spread.`) +
+            ` Greyed cells are locked at that age. Red rows cannot fund spending.`;
+    }
+
+    head.innerHTML = `
+        <tr>
+            <th>Age</th>
+            <th class="num">Taxable</th>
+            <th class="num">IKE</th>
+            <th class="num">IKZE</th>
+            <th class="num">PPK</th>
+            <th class="num">Total</th>
+            <th class="num">Spendable</th>
+            <th class="num">Return</th>
+            <th class="num">Paid in</th>
+            <th class="num">Spending</th>
+            <th class="num">Income</th>
+            <th class="num">From capital</th>
+            <th class="num">Short</th>
+        </tr>`;
+
+    const cell = (value, locked) =>
+        `<td class="num${locked ? ' locked' : ''}">${value ? formatPLN(value) : '—'}</td>`;
+
+    body.innerHTML = rows.map(r => {
+        const age = r.age;
+        const retired = age >= retireAge;
+        const isShort = r.shortfall > 1;
+        // A milestone row is where something changes: retirement or an unlock.
+        const milestone = [retireAge, gates.ike, gates.ikze, gates.ppk, zusAge].includes(age);
+        const cls = [isShort ? 'short' : (retired ? 'retired' : ''),
+                     milestone ? 'milestone' : ''].filter(Boolean).join(' ');
+        return `
+            <tr class="${cls}">
+                <td>${age}${milestone ? ' <span class="text-muted">•</span>' : ''}</td>
+                ${cell(r.taxable, false)}
+                ${cell(r.ike, age < gates.ike)}
+                ${cell(r.ikze, age < gates.ikze)}
+                ${cell(r.ppk, age < gates.ppk)}
+                <td class="num fw-semibold">${formatPLN(r.total)}</td>
+                <td class="num">${formatPLN(r.reachable)}</td>
+                <td class="num">${formatPct(r.return_rate, 1)}</td>
+                <td class="num">${r.contributions ? formatPLN(r.contributions) : '—'}</td>
+                <td class="num">${r.spending ? formatPLN(r.spending) : '—'}</td>
+                <td class="num">${r.income ? formatPLN(r.income) : '—'}</td>
+                <td class="num">${r.funded_from_capital ? formatPLN(r.funded_from_capital) : '—'}</td>
+                <td class="num ${isShort ? 'text-negative fw-semibold' : ''}">${
+                    isShort ? formatPLN(r.shortfall) : '—'}</td>
+            </tr>`;
+    }).join('');
 }
 
 // ── Chart ───────────────────────────────────────────

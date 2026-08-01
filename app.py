@@ -782,6 +782,31 @@ def _classify_account(account):
     return "taxable"
 
 
+def _balances_by_account(data):
+    """Newest-snapshot value per account, tagged with its simulation bucket.
+
+    IKE-M and IKE Obligacje are separate accounts but the same wrapper, so the
+    engine simulates them as IKE. Showing the split here means the table can
+    explain that rather than appear to have lost an account.
+    """
+    latest = data["latest"]
+    rows = {}
+    for p in (data["all_positions"].get(latest["id"], []) if latest else []):
+        account = p["account"] or "Other"
+        row = rows.setdefault(account, {
+            "account": account,
+            "bucket": _classify_account(p["account"]),
+            "value": 0.0,
+        })
+        row["value"] += p["value_pln"]
+
+    if data["cash_total"]:
+        rows["Cash"] = {"account": "Cash", "bucket": "taxable",
+                        "value": data["cash_total"]}
+
+    return sorted(rows.values(), key=lambda r: -r["value"])
+
+
 def _current_balances(data):
     """Split the newest snapshot across wrappers, with an estimated cost basis.
 
@@ -966,6 +991,7 @@ def api_retirement():
     sustainable = retirement.sustainable_spending(
         params, returns, threshold=threshold, paths=200, seed=42)
     path = retirement.median_path(params, returns, paths=200, seed=42)
+    projection = retirement.representative_run(params, returns, paths=200, seed=42)
 
     return jsonify({
         "available": True,
@@ -996,6 +1022,13 @@ def api_retirement():
         "shortfall_run_share": round(len(shortfall_ages) / 200, 3),
         "sustainable_spending_at_chosen_age": round(sustainable, -2),
         "path": path,
+        # Year-by-year detail for the projection table. One run, so the columns
+        # reconcile; see representative_run for why medians would not.
+        "projection": projection,
+        # Starting balances by account, so IKE-M and IKE Obligacje are visible
+        # even though the simulation folds them into IKE — the wrapper rules are
+        # identical, so splitting them in the model would add no information.
+        "balances_by_account": _balances_by_account(data),
     })
 
 

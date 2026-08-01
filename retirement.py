@@ -189,11 +189,11 @@ def simulate_path(params, returns, rng, stop_on_failure=True):
                 buckets[name].add(amount)
 
         shortfall = 0.0
+        income = 0.0
         spending = params["annual_spending"] if age >= params["retirement_age"] else 0.0
 
         if spending > 0:
             # Guaranteed income first — it reduces what capital must cover.
-            income = 0.0
             if age >= params["zus_start_age"]:
                 income += params["zus_annual"]
 
@@ -244,6 +244,13 @@ def simulate_path(params, returns, rng, stop_on_failure=True):
             "ppk": buckets[PPK].value,
             "shortfall": shortfall,
             "cumulative_shortfall": cumulative_shortfall,
+            # Year's cash flows, so a table row can be reconciled by hand:
+            # spending = income + funded_from_capital + shortfall.
+            "return_rate": r,
+            "contributions": sum(contributions.values()),
+            "spending": spending,
+            "income": income,
+            "funded_from_capital": max(0.0, spending - income - shortfall),
         })
 
         if shortfall > 1e-6:
@@ -344,6 +351,28 @@ def median_path(params, returns, paths=200, seed=None):
             "failed_share": short / len(runs),
         })
     return out
+
+
+def representative_run(params, returns, paths=200, seed=None):
+    """One whole run, for a year-by-year table.
+
+    Deliberately a single run rather than per-bucket medians. Medians are not
+    additive: the median IKE balance and the median taxable balance come from
+    different runs, so a table built from them would not add up to the median
+    total and could not be reconciled by hand. One run always adds up.
+
+    The run chosen is the one whose ending capital is the median, so it is
+    representative rather than cherry-picked. With a fixed return rate every
+    run is identical and the choice is moot.
+    """
+    rng = random.Random(seed)
+    runs = [simulate_path(params, returns, rng, stop_on_failure=False)[1]
+            for _ in range(paths)]
+    runs = [r for r in runs if r]
+    if not runs:
+        return []
+    runs.sort(key=lambda r: r[-1]["total"])
+    return runs[len(runs) // 2]
 
 
 def first_shortfall_ages(params, returns, paths=200, seed=None):
