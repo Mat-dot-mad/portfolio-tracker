@@ -373,3 +373,60 @@ class TestPlannerApi:
         dear = client.get("/api/retirement").get_json()["earliest_feasible_age"]
         assert cheap is not None
         assert dear is None or dear > cheap
+
+
+class TestDerivedSavingRate:
+    """The cash-flow import already records what goes into the portfolio, so
+    the planner should use it rather than a placeholder."""
+
+    def _history(self):
+        import db as db_module
+        for i, (q, d, v) in enumerate([
+            ("2025-Q1", "2025-03-31", 100_000.0),
+            ("2025-Q2", "2025-06-30", 100_000.0),
+            ("2025-Q3", "2025-09-30", 100_000.0),
+            ("2025-Q4", "2025-12-31", 100_000.0),
+            ("2026-Q1", "2026-03-31", 100_000.0),
+        ]):
+            sid = db_module.create_snapshot(q, d)
+            db_module.insert_positions(sid, [{
+                "name": "F", "ticker": "F", "isin": None, "account": "Interactive Brokers",
+                "group_name": "g", "currency": "PLN", "tags": "ETF", "value_pln": v}])
+
+    def test_saving_rate_comes_from_tracked_contributions(self, client, make_cash_flows):
+        self._history()
+        # 10k in each of the four quarters after the first -> 40k/yr.
+        make_cash_flows(
+            ("2025-01-01", "deposit", 999_000.0),   # pre-first-snapshot lump, must be ignored
+            ("2025-05-01", "deposit", 10_000.0),
+            ("2025-08-01", "deposit", 10_000.0),
+            ("2025-11-01", "deposit", 10_000.0),
+            ("2026-02-01", "deposit", 10_000.0),
+        )
+        body = client.get("/api/retirement").get_json()
+        assert body["contribution_rate_4q"] == pytest.approx(40_000, abs=100)
+        assert float(body["settings"]["annual_savings"]) == pytest.approx(40_000, abs=100)
+
+    def test_an_explicit_setting_overrides_the_derived_rate(self, client, make_cash_flows):
+        self._history()
+        make_cash_flows(("2025-05-01", "deposit", 10_000.0))
+        client.post("/api/retirement", json={"annual_savings": 250_000})
+        body = client.get("/api/retirement").get_json()
+        assert float(body["settings"]["annual_savings"]) == pytest.approx(250_000)
+
+    def test_reported_settings_match_what_was_simulated(self, client, make_cash_flows):
+        """Regression: the response echoed the static default while the
+        simulation used the derived rate, so the form and the results
+        disagreed."""
+        self._history()
+        make_cash_flows(
+            ("2025-05-01", "deposit", 30_000.0),
+            ("2025-08-01", "deposit", 30_000.0),
+            ("2025-11-01", "deposit", 30_000.0),
+            ("2026-02-01", "deposit", 30_000.0),
+        )
+        body = client.get("/api/retirement").get_json()
+        import app as app_module
+        assert float(body["settings"]["annual_savings"]) != app_module.RETIREMENT_DEFAULTS["annual_savings"]
+        assert float(body["settings"]["annual_savings"]) == pytest.approx(
+            body["contribution_rate_8q"], abs=100)

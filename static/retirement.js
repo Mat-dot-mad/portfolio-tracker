@@ -165,6 +165,15 @@ function fillForm(settings, data) {
         if (el) el.value = settings[key];
     }
 
+    // Show what the cash-flow import actually records, so the saving rate can
+    // be checked against reality rather than guessed.
+    const savingsNote = document.getElementById('annual_savings_note');
+    if (savingsNote && data && data.contribution_rate_8q != null) {
+        savingsNote.innerHTML =
+            `today's money · your tracked rate: <strong>${formatPLN(data.contribution_rate_8q)}</strong>` +
+            ` over 8 quarters, ${formatPLN(data.contribution_rate_4q)} over 4`;
+    }
+
     // When PPK is tracked quarterly, that balance wins and the field becomes
     // read-only — two editable copies of the same number would silently drift.
     const ppkEl = document.getElementById('start_ppk');

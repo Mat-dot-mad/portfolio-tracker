@@ -809,6 +809,30 @@ def _current_balances(data):
     return balances, basis_ratio
 
 
+def _contribution_rates(data):
+    """Annualised net contributions from the tracked cash-flow history.
+
+    The import already records exactly what goes into the portfolio, including
+    the BOSSA IKE and IKZE accounts, so the planner should not ask the user to
+    retype it. PPK is excluded because it comes from payroll and is modelled
+    from salary instead — no double counting.
+
+    The first snapshot is skipped: its net_contributions lumps in all
+    pre-snapshot history and would badly distort an average.
+
+    Returns (last_4_quarters, last_8_quarters_annualised). The 8-quarter figure
+    is the default because quarterly contributions are lumpy — one strong
+    quarter should not set a rate that gets extrapolated for decades.
+    """
+    per_quarter = [t.get("net_contributions") or 0 for t in data["timeline"][1:]]
+    if not per_quarter:
+        return None, None
+    last4 = sum(per_quarter[-4:])
+    window8 = per_quarter[-8:]
+    last8 = sum(window8) / len(window8) * 4
+    return round(last4, -2), round(last8, -2)
+
+
 def _geometric_mean(returns):
     """Constant rate reproducing the same compound growth as the sample."""
     if not returns:
@@ -868,6 +892,12 @@ def _retirement_params(settings, data):
     balances, basis_ratio = _current_balances(data)
 
     params = {k: num(k) for k in RETIREMENT_DEFAULTS}
+
+    # Saving rate: prefer what the cash-flow import actually shows over the
+    # placeholder default, unless the user has set a figure themselves.
+    _last4, last8 = _contribution_rates(data)
+    if "annual_savings" not in settings and last8 is not None:
+        params["annual_savings"] = last8
     params["ppk_enabled"] = bool(num("ppk_enabled"))
     params["ppk_installment_years"] = int(num("ppk_installment_years"))
 
@@ -922,13 +952,21 @@ def api_retirement():
 
     return jsonify({
         "available": True,
-        "settings": {k: settings.get(k, v) for k, v in RETIREMENT_DEFAULTS.items()},
+        # Report the values actually simulated. annual_savings can be derived
+        # from cash-flow history rather than taken from the static default, and
+        # the form must show what was used or the two silently disagree.
+        "settings": {
+            **{k: settings.get(k, v) for k, v in RETIREMENT_DEFAULTS.items()},
+            "annual_savings": params["annual_savings"],
+        },
         "balances": balances,
         "basis_ratio": round(basis_ratio, 3),
         "return_source": return_source,
         # Non-null when a PPK balance is tracked in Quarterly Entry; the UI
         # shows the field as read-only in that case so the two can't drift.
         "ppk_from_snapshot": balances["ppk"] or None,
+        "contribution_rate_4q": _contribution_rates(data)[0],
+        "contribution_rate_8q": _contribution_rates(data)[1],
         # Geometric, not arithmetic. The headline figures are medians, and a
         # median path compounds at the geometric mean; the arithmetic mean is
         # higher under volatility and would overstate what the chart shows.
