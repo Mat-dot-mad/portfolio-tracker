@@ -182,8 +182,13 @@ function renderResults(d) {
     const meets = d.chosen_age_success_rate >= threshold;
     rateEl.textContent = formatPct(d.chosen_age_success_rate);
     rateEl.className = `card-value ${meets ? 'text-positive' : 'text-negative'}`;
+    const shortfallNote = d.median_first_shortfall_age
+        ? ` Money runs short around age ${d.median_first_shortfall_age}` +
+          ` in ${formatPct(d.shortfall_run_share)} of runs.`
+        : '';
     document.getElementById('chosen-detail').textContent =
-        `Retiring at ${chosenAge} — ${meets ? 'meets' : 'below'} your ${formatPct(threshold)} bar.`;
+        `Retiring at ${chosenAge} — ${meets ? 'meets' : 'below'} your ${formatPct(threshold)} bar.` +
+        shortfallNote;
 
     document.getElementById('sustainable').textContent =
         formatPLN(d.sustainable_spending_at_chosen_age);
@@ -262,6 +267,25 @@ const milestonesPlugin = {
             ctx.restore();
         }
 
+        // Where plans start running short. Drawn solid and labelled, because
+        // it is the single most important thing on the chart when it exists.
+        if (opts.shortfallAge) {
+            const sx = xFor(opts.shortfallAge);
+            if (sx !== null) {
+                ctx.save();
+                ctx.strokeStyle = 'rgba(220, 53, 69, 0.9)';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(sx, chartArea.top);
+                ctx.lineTo(sx, chartArea.bottom);
+                ctx.stroke();
+                ctx.fillStyle = 'rgba(220, 53, 69, 0.95)';
+                ctx.font = 'bold 11px sans-serif';
+                ctx.fillText(`runs short at ${opts.shortfallAge}`, sx + 5, chartArea.top + 28);
+                ctx.restore();
+            }
+        }
+
         ctx.save();
         ctx.setLineDash([4, 4]);
         ctx.lineWidth = 1;
@@ -328,6 +352,7 @@ function renderChart(d) {
                     retireAge,
                     ikeAge: Number(s.ike_access_age),
                     ppkAge: Number(s.ppk_access_age),
+                    shortfallAge: d.median_first_shortfall_age,
                     markers: [
                         { age: retireAge, label: 'retire', color: 'rgba(108,117,125,0.85)' },
                         { age: Number(s.ike_access_age), label: 'IKE', color: 'rgba(13,110,253,0.7)' },
@@ -340,7 +365,10 @@ function renderChart(d) {
                     callbacks: {
                         title: items => {
                             const age = Number(items[0].label);
-                            return `Age ${age}${age >= retireAge ? ' (retired)' : ''}`;
+                            const pt = path[items[0].dataIndex];
+                            const short = pt && pt.failed_share > 0
+                                ? ` · ${formatPct(pt.failed_share)} short by here` : '';
+                            return `Age ${age}${age >= retireAge ? ' (retired)' : ''}${short}`;
                         },
                         label: ctx => {
                             if (ctx.dataset.label === 'P10') return null;

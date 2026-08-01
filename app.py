@@ -946,6 +946,14 @@ def api_retirement():
         min_age=int(params["current_age"]) + 1, max_age=75, seed=42)
 
     chosen = retirement.success_rate(params, returns, paths=300, seed=42)
+
+    # Where plans start failing. Without this a 0%-success plan showed a chart
+    # that simply stopped, with capital still on screen — it read as "fine,
+    # then the data ends" rather than "you run short here".
+    shortfall_ages = [a for a in retirement.first_shortfall_ages(
+        params, returns, paths=200, seed=42) if a is not None]
+    median_shortfall_age = (sorted(shortfall_ages)[len(shortfall_ages) // 2]
+                            if shortfall_ages else None)
     sustainable = retirement.sustainable_spending(
         params, returns, threshold=threshold, paths=200, seed=42)
     path = retirement.median_path(params, returns, paths=200, seed=42)
@@ -975,6 +983,8 @@ def api_retirement():
         "earliest_feasible_age": age,
         "earliest_feasible_rate": round(rate, 3),
         "chosen_age_success_rate": round(chosen, 3),
+        "median_first_shortfall_age": median_shortfall_age,
+        "shortfall_run_share": round(len(shortfall_ages) / 200, 3),
         "sustainable_spending_at_chosen_age": round(sustainable, -2),
         "path": path,
     })

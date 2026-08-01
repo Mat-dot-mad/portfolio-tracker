@@ -149,11 +149,19 @@ def _annual_contributions(params, age):
     return out
 
 
-def simulate_path(params, returns, rng):
+def simulate_path(params, returns, rng, stop_on_failure=True):
     """Run one lifetime. Returns (survived, yearly_records).
 
     A run fails the first year that spending cannot be met from accessible
     money — including when total wealth is ample but locked away.
+
+    `stop_on_failure` exists because the two callers want different things.
+    success_rate() only needs the verdict, so it stops at the first shortfall
+    and saves work. Charting needs the whole trajectory: stopping early made
+    the line end mid-plot with capital still showing, which read as "fine, then
+    the chart ends" rather than "ran short here". It also biased the
+    percentiles, because failed runs dropped out of the sample and later ages
+    were averaged over survivors only.
     """
     buckets = {
         TAXABLE: Bucket(params["start_taxable"], params["start_taxable_basis"]),
@@ -165,6 +173,7 @@ def simulate_path(params, returns, rng):
     age = params["current_age"]
     horizon = params["horizon_age"]
     records = []
+    failed = False
     ppk_installment = 0.0
     ppk_installments_left = 0
 
@@ -228,11 +237,13 @@ def simulate_path(params, returns, rng):
         })
 
         if shortfall > 1e-6:
-            return False, records
+            failed = True
+            if stop_on_failure:
+                return False, records
 
         age += 1
 
-    return True, records
+    return (not failed), records
 
 
 def success_rate(params, returns, paths=500, seed=None):
@@ -286,22 +297,43 @@ def sustainable_spending(params, returns, threshold=0.9, paths=300,
 
 
 def median_path(params, returns, paths=200, seed=None):
-    """A representative trajectory for charting, plus percentile bands."""
-    rng = random.Random(seed)
-    runs = [simulate_path(params, returns, rng)[1] for _ in range(paths)]
-    longest = max(len(r) for r in runs)
+    """Percentile bands for charting, plus how many runs have fallen short.
 
+    Runs continue past their first shortfall so every path spans the full
+    horizon. Percentiles are therefore taken over ALL runs at every age rather
+    than only those still solvent — the previous behaviour dropped failed runs
+    from the sample, so late ages were averaged over survivors and looked
+    better than they were.
+    """
+    rng = random.Random(seed)
+    runs = [simulate_path(params, returns, rng, stop_on_failure=False)[1]
+            for _ in range(paths)]
+    if not runs:
+        return []
+
+    length = min(len(r) for r in runs)
     out = []
-    for i in range(longest):
-        totals = sorted(r[i]["total"] for r in runs if i < len(r))
-        if not totals:
-            continue
-        ref = next(r[i] for r in runs if i < len(r))
+    for i in range(length):
+        totals = sorted(r[i]["total"] for r in runs)
         pick = lambda f: totals[min(len(totals) - 1, int(f * len(totals)))]
+        # Share of runs that have hit a shortfall at or before this age. This is
+        # what turns "the line stops" into "this is where plans start failing".
+        short = sum(1 for r in runs if any(y["shortfall"] > 1e-6 for y in r[:i + 1]))
         out.append({
-            "age": ref["age"],
+            "age": runs[0][i]["age"],
             "p10": pick(0.10),
             "p50": pick(0.50),
             "p90": pick(0.90),
+            "failed_share": short / len(runs),
         })
     return out
+
+
+def first_shortfall_ages(params, returns, paths=200, seed=None):
+    """Age each run first cannot fund spending; None where it never happens."""
+    rng = random.Random(seed)
+    ages = []
+    for _ in range(paths):
+        _ok, rec = simulate_path(params, returns, rng, stop_on_failure=True)
+        ages.append(next((y["age"] for y in rec if y["shortfall"] > 1e-6), None))
+    return ages

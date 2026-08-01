@@ -430,3 +430,62 @@ class TestDerivedSavingRate:
         assert float(body["settings"]["annual_savings"]) != app_module.RETIREMENT_DEFAULTS["annual_savings"]
         assert float(body["settings"]["annual_savings"]) == pytest.approx(
             body["contribution_rate_8q"], abs=100)
+
+
+class TestFailedRunsAreVisible:
+    """A plan that fails must look like it failed.
+
+    Runs used to stop at their first shortfall, so the chart ended mid-plot
+    with capital still on screen — a 0%-success plan looked like it simply ran
+    out of data. It also biased the bands, because failed runs left the sample
+    and later ages were averaged over survivors only.
+    """
+
+    def _bridge_failure(self):
+        # Retires at 48 with most capital locked until 60: the taxable pot runs
+        # dry years before the wrappers open.
+        return make_params(
+            current_age=40, retirement_age=48, horizon_age=90,
+            annual_spending=180_000.0, annual_savings=0.0,
+            start_taxable=300_000.0, start_taxable_basis=300_000.0,
+            start_ike=1_000_000.0, start_ike_basis=1_000_000.0)
+
+    def test_path_reaches_the_horizon_even_when_every_run_fails(self):
+        params = self._bridge_failure()
+        assert retirement.success_rate(params, [0.03], paths=20, seed=1) == 0.0
+
+        path = retirement.median_path(params, [0.03], paths=20, seed=1)
+        assert path[-1]["age"] == params["horizon_age"] - 1
+
+    def test_failed_share_rises_to_one(self):
+        path = retirement.median_path(self._bridge_failure(), [0.03], paths=20, seed=1)
+        assert path[0]["failed_share"] == 0.0
+        assert path[-1]["failed_share"] == 1.0
+
+    def test_capital_reaches_zero_rather_than_stopping_mid_air(self):
+        path = retirement.median_path(self._bridge_failure(), [0.03], paths=20, seed=1)
+        assert path[-1]["p50"] == pytest.approx(0, abs=1.0)
+
+    def test_first_shortfall_age_precedes_the_wrapper_unlock(self):
+        params = self._bridge_failure()
+        ages = [a for a in retirement.first_shortfall_ages(params, [0.03], paths=20, seed=1)
+                if a is not None]
+        assert ages
+        assert max(ages) < params["ike_access_age"]   # it is a bridge failure
+
+    def test_a_healthy_plan_reports_no_shortfall(self):
+        params = make_params(
+            current_age=60, retirement_age=60, horizon_age=75,
+            annual_spending=40_000.0,
+            start_taxable=3_000_000.0, start_taxable_basis=3_000_000.0)
+        ages = retirement.first_shortfall_ages(params, [0.03], paths=20, seed=1)
+        assert all(a is None for a in ages)
+        path = retirement.median_path(params, [0.03], paths=20, seed=1)
+        assert all(p["failed_share"] == 0 for p in path)
+
+    def test_percentiles_use_every_run_not_just_survivors(self):
+        """With all runs failing, the bands must collapse together at zero
+        rather than tracking whichever runs happened to last longest."""
+        path = retirement.median_path(self._bridge_failure(), [0.03], paths=20, seed=1)
+        final = path[-1]
+        assert final["p90"] == pytest.approx(final["p10"], abs=1.0)
