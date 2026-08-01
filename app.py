@@ -852,13 +852,22 @@ def _real_return_pool(data, inflation_rate, size=2000, seed=12345):
     forecast page) are deflated to real terms, then sampled in groups of four
     and compounded. Sampling quarters rather than whole years keeps the sample
     size usable — 18 quarters would otherwise yield only four annual figures.
+
+    PPK is excluded from both ends of every quarter, the same way the lifetime
+    gains card excludes it. get_all_snapshots_summary folds ppk_total into
+    portfolio_total, but PPK is payroll-deducted and so never reaches the
+    cash-flow export that supplies net_contributions. Left in, every employer
+    and state contribution is scored as market return — and the planner then
+    compounds that error across a lifetime.
     """
     timeline = data["timeline"]
     quarterly = []
     for i in range(1, len(timeline)):
         prev, curr = timeline[i - 1], timeline[i]
-        prev_nw = prev["portfolio_total"] + prev["cash_total"] - prev["mortgage_total"]
-        curr_nw = curr["portfolio_total"] + curr["cash_total"] - curr["mortgage_total"]
+        prev_nw = (prev["portfolio_total"] - prev.get("ppk_total", 0)
+                   + prev["cash_total"] - prev["mortgage_total"])
+        curr_nw = (curr["portfolio_total"] - curr.get("ppk_total", 0)
+                   + curr["cash_total"] - curr["mortgage_total"])
         if prev_nw <= 0:
             continue
         contrib = curr.get("net_contributions") or 0

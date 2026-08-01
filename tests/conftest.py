@@ -47,7 +47,8 @@ def make_snapshot():
 
     Returns the snapshot id so tests can build multi-quarter histories.
     """
-    def _make(quarter, snapshot_date, portfolio=0.0, cash=0.0, mortgage=0.0):
+    def _make(quarter, snapshot_date, portfolio=0.0, cash=0.0, mortgage=0.0,
+              ppk=0.0):
         snapshot_id = db.create_snapshot(quarter, snapshot_date)
         if portfolio:
             db.insert_positions(snapshot_id, [{
@@ -67,6 +68,9 @@ def make_snapshot():
         if mortgage:
             entries.append({"type": "mortgage", "label": "Mortgage", "currency": "PLN",
                             "original_amount": mortgage, "amount_pln": mortgage})
+        if ppk:
+            entries.append({"type": "ppk", "label": "PPK", "currency": "PLN",
+                            "original_amount": ppk, "amount_pln": ppk})
         if entries:
             db.save_manual_entries(snapshot_id, entries)
         return snapshot_id

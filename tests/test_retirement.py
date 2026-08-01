@@ -432,6 +432,50 @@ class TestDerivedSavingRate:
             body["contribution_rate_8q"], abs=100)
 
 
+class TestReturnPoolExcludesPPK:
+    """PPK contributions must not be scored as market return.
+
+    PPK counts inside portfolio_total but is payroll-deducted, so it never
+    reaches the cash-flow export that supplies net_contributions. Left in, the
+    return pool reads every employer and state contribution as a gain — and the
+    planner compounds that across a lifetime. Observed live: 12.95% vs 10.46%
+    real on the same history.
+    """
+
+    def _flat_market_with_growing_ppk(self, make_snapshot):
+        # Portfolio and cash never move, so the true market return is zero.
+        # Only PPK grows, purely from contributions.
+        for i, (q, d) in enumerate([
+            ("2025-Q1", "2025-03-31"), ("2025-Q2", "2025-06-30"),
+            ("2025-Q3", "2025-09-30"), ("2025-Q4", "2025-12-31"),
+            ("2026-Q1", "2026-03-31"),
+        ]):
+            make_snapshot(q, d, portfolio=500_000.0, ppk=10_000.0 * (i + 1))
+
+    def test_ppk_growth_is_not_counted_as_market_return(self, client, make_snapshot):
+        self._flat_market_with_growing_ppk(make_snapshot)
+        import app as app_module
+        data = app_module._build_dashboard_data()
+        pool = app_module._real_return_pool(data, inflation_rate=0.0)
+        # Nothing actually appreciated, so every sampled year must be flat.
+        assert pool is not None
+        assert app_module._geometric_mean(pool) == pytest.approx(0.0, abs=1e-9)
+
+    def test_real_appreciation_still_registers(self, client, make_snapshot):
+        """Guard against 'fixing' the leak by zeroing the pool outright."""
+        for i, (q, d) in enumerate([
+            ("2025-Q1", "2025-03-31"), ("2025-Q2", "2025-06-30"),
+            ("2025-Q3", "2025-09-30"), ("2025-Q4", "2025-12-31"),
+            ("2026-Q1", "2026-03-31"),
+        ]):
+            make_snapshot(q, d, portfolio=500_000.0 * (1.02 ** i), ppk=10_000.0)
+        import app as app_module
+        pool = app_module._real_return_pool(
+            app_module._build_dashboard_data(), inflation_rate=0.0)
+        # 2% a quarter compounds to roughly 8.2% a year.
+        assert app_module._geometric_mean(pool) == pytest.approx(0.0824, abs=0.005)
+
+
 class TestFailedRunsAreVisible:
     """A plan that fails must look like it failed.
 
