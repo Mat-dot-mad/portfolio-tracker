@@ -809,6 +809,18 @@ def _current_balances(data):
     return balances, basis_ratio
 
 
+def _geometric_mean(returns):
+    """Constant rate reproducing the same compound growth as the sample."""
+    if not returns:
+        return 0.0
+    product = 1.0
+    for r in returns:
+        if 1 + r <= 0:
+            return 0.0
+        product *= (1 + r)
+    return product ** (1 / len(returns)) - 1
+
+
 def _real_return_pool(data, inflation_rate, size=2000, seed=12345):
     """Annual REAL returns to bootstrap from.
 
@@ -917,7 +929,11 @@ def api_retirement():
         # Non-null when a PPK balance is tracked in Quarterly Entry; the UI
         # shows the field as read-only in that case so the two can't drift.
         "ppk_from_snapshot": balances["ppk"] or None,
-        "mean_real_return": round(sum(returns) / len(returns), 4),
+        # Geometric, not arithmetic. The headline figures are medians, and a
+        # median path compounds at the geometric mean; the arithmetic mean is
+        # higher under volatility and would overstate what the chart shows.
+        "mean_real_return": round(_geometric_mean(returns), 4),
+        "arithmetic_real_return": round(sum(returns) / len(returns), 4),
         "earliest_feasible_age": age,
         "earliest_feasible_rate": round(rate, 3),
         "chosen_age_success_rate": round(chosen, 3),

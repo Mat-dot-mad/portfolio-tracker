@@ -61,7 +61,8 @@ function renderResults(d) {
 
     document.getElementById('chart-note').innerHTML =
         `Median with 10th–90th percentile band, ${d.return_source} returns ` +
-        `averaging <strong>${formatPct(d.mean_real_return, 1)}</strong> real per year. ` +
+        `compounding at <strong>${formatPct(d.mean_real_return, 1)}</strong> real per year ` +
+        `(geometric; arithmetic mean is ${formatPct(d.arithmetic_real_return, 1)}). ` +
         `Retirement at ${chosenAge}; IKE unlocks at ${s.ike_access_age}, IKZE at ${s.ikze_access_age}.`;
 }
 
