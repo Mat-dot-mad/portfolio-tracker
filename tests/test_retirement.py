@@ -510,6 +510,47 @@ class TestFailedRunsAreVisible:
         path = retirement.median_path(self._bridge_failure(), [0.03], paths=20, seed=1)
         assert path[-1]["p50"] == pytest.approx(0, abs=1.0)
 
+    def test_spendable_capital_hits_zero_while_total_is_still_rising(self):
+        """The reported confusion, as a test.
+
+        During a bridge failure the locked buckets keep compounding, so total
+        capital climbs through the very years nothing can be paid for. Charting
+        the total alone therefore cannot show the failure at all — only the
+        reachable figure can.
+        """
+        params = self._bridge_failure()
+        rng = random.Random(1)
+        _ok, rec = retirement.simulate_path(params, [0.03], rng,
+                                            stop_on_failure=False)
+
+        broke = [y for y in rec if y["shortfall"] > 1e-6
+                 and y["age"] < params["ike_access_age"]]
+        assert broke, "expected unfunded years before the IKE unlock"
+
+        # Nothing reachable in those years...
+        assert all(y["reachable"] == pytest.approx(0, abs=1.0) for y in broke)
+        # ...while total capital is not merely positive but growing.
+        assert broke[-1]["total"] > broke[0]["total"] > 0
+
+    def test_reachable_excludes_locked_buckets_before_their_age(self):
+        params = self._bridge_failure()
+        rng = random.Random(1)
+        _ok, rec = retirement.simulate_path(params, [0.0], rng,
+                                            stop_on_failure=False)
+        before = next(y for y in rec if y["age"] == params["ike_access_age"] - 1)
+        after = next(y for y in rec if y["age"] == params["ike_access_age"])
+        assert before["reachable"] < before["total"]      # IKE still locked
+        assert after["reachable"] == pytest.approx(after["total"], abs=1.0)
+
+    def test_cumulative_shortfall_accrues(self):
+        params = self._bridge_failure()
+        rng = random.Random(1)
+        _ok, rec = retirement.simulate_path(params, [0.03], rng,
+                                            stop_on_failure=False)
+        running = [y["cumulative_shortfall"] for y in rec]
+        assert running == sorted(running)          # never decreases
+        assert running[-1] == pytest.approx(sum(y["shortfall"] for y in rec))
+
     def test_first_shortfall_age_precedes_the_wrapper_unlock(self):
         params = self._bridge_failure()
         ages = [a for a in retirement.first_shortfall_ages(params, [0.03], paths=20, seed=1)

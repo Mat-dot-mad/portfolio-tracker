@@ -196,8 +196,12 @@ function renderResults(d) {
     renderBuckets(d);
 
     document.getElementById('chart-note').innerHTML =
-        `Median with 10th–90th percentile band, ${d.return_source} returns ` +
-        `compounding at <strong>${formatPct(d.mean_real_return, 1)}</strong> real per year ` +
+        `<strong class="text-positive">Spendable now</strong> is what you can actually reach ` +
+        `at each age; <span class="text-primary">total capital</span> includes money still ` +
+        `locked in IKE, IKZE and PPK. When the two diverge, the gap is unreachable — ` +
+        `a plan can run short while total capital is still climbing.<br>` +
+        `${d.return_source} returns compounding at ` +
+        `<strong>${formatPct(d.mean_real_return, 1)}</strong> real per year ` +
         `(geometric; arithmetic mean is ${formatPct(d.arithmetic_real_return, 1)}).` +
         (chartUsesLogScale
             ? ' <span class="text-warning">Log scale</span> — the spread is too wide to read linearly.'
@@ -321,9 +325,14 @@ function renderChart(d) {
     // linear view is informative anyway.
     const values = path.flatMap(p => [p.p10, p.p50, p.p90]).filter(v => v > 0);
     const spread = values.length ? Math.max(...values) / Math.min(...values) : 1;
-    const anyDepleted = path.some(p => p.p10 <= 0);
+    // Spendable capital reaching zero is the thing worth seeing, and a log axis
+    // cannot plot zero — so any depletion, of either measure, forces linear.
+    const anyDepleted = path.some(p => p.p10 <= 0 || p.reachable_p10 <= 0
+                                       || p.reachable_p50 <= 0);
     const useLog = !anyDepleted && spread > 20;
     chartUsesLogScale = useLog;
+
+    const anyFailure = path.some(p => p.failed_share > 0);
 
     retirementChart = new Chart(canvas, {
         type: 'line',
@@ -332,13 +341,33 @@ function renderChart(d) {
             labels: path.map(p => p.age),
             datasets: [
                 { label: 'P10', data: path.map(p => p.p10),
-                  borderColor: 'rgba(13,110,253,0)', pointRadius: 0, fill: false, order: 3 },
+                  borderColor: 'rgba(13,110,253,0)', pointRadius: 0, fill: false, order: 5 },
                 { label: 'P10–P90 range', data: path.map(p => p.p90),
-                  borderColor: 'rgba(13,110,253,0)', backgroundColor: 'rgba(13,110,253,0.15)',
-                  pointRadius: 0, fill: '-1', order: 2 },
-                { label: 'Median capital', data: path.map(p => p.p50),
-                  borderColor: '#0d6efd', borderWidth: 2.5, pointRadius: 0,
+                  borderColor: 'rgba(13,110,253,0)', backgroundColor: 'rgba(13,110,253,0.13)',
+                  pointRadius: 0, fill: '-1', order: 4 },
+                // Total capital is now the muted, dashed reference line. It is
+                // the number that misleads: it keeps rising through a bridge
+                // failure because the locked buckets carry on compounding.
+                { label: 'Total capital (median)', data: path.map(p => p.p50),
+                  borderColor: 'rgba(13,110,253,0.55)', borderWidth: 2,
+                  borderDash: [6, 4], pointRadius: 0, fill: false, tension: 0.2, order: 3 },
+                // The line that answers "can I actually pay for my life?".
+                { label: 'Spendable now (median)', data: path.map(p => p.reachable_p50),
+                  borderColor: '#198754', borderWidth: 3, pointRadius: 0,
                   fill: false, tension: 0.2, order: 1 },
+                { label: 'Spendable, poor case (P10)', data: path.map(p => p.reachable_p10),
+                  borderColor: '#dc3545', borderWidth: 2, borderDash: [3, 3],
+                  pointRadius: 0, fill: false, tension: 0.2, order: 2 },
+                // Only drawn when something actually fails, so a healthy plan
+                // is not cluttered by a flat zero line.
+                ...(anyFailure ? [{
+                    label: 'Runs already short',
+                    data: path.map(p => p.failed_share),
+                    yAxisID: 'y1',
+                    borderColor: 'rgba(220,53,69,0.65)', borderWidth: 1,
+                    backgroundColor: 'rgba(220,53,69,0.13)',
+                    pointRadius: 0, fill: 'origin', tension: 0.2, order: 6,
+                }] : []),
             ],
         },
         options: {
@@ -376,7 +405,19 @@ function renderChart(d) {
                                 const p10 = ctx.chart.data.datasets[0].data[ctx.dataIndex];
                                 return `Range: ${formatPLN(p10)} – ${formatPLN(ctx.parsed.y)}`;
                             }
+                            if (ctx.dataset.label === 'Runs already short') {
+                                return `Runs already short: ${formatPct(ctx.parsed.y)}`;
+                            }
                             return `${ctx.dataset.label}: ${formatPLN(ctx.parsed.y)}`;
+                        },
+                        // The gap between the two capital lines IS the locked
+                        // money, so name it rather than making it be inferred.
+                        afterBody: items => {
+                            const pt = path[items[0].dataIndex];
+                            if (!pt) return '';
+                            const locked = pt.p50 - pt.reachable_p50;
+                            if (locked <= 1) return '';
+                            return `Locked behind an age gate: ${formatPLN(locked)}`;
                         },
                     },
                 },
@@ -386,6 +427,15 @@ function renderChart(d) {
                 y: useLog
                     ? { type: 'logarithmic', ticks: { callback: v => formatPLN(v) } }
                     : { beginAtZero: true, ticks: { callback: v => formatPLN(v) } },
+                y1: {
+                    display: anyFailure,
+                    position: 'right',
+                    min: 0,
+                    max: 1,
+                    grid: { drawOnChartArea: false },
+                    ticks: { callback: v => `${Math.round(v * 100)}%` },
+                    title: { display: true, text: 'runs already short' },
+                },
             },
         },
     });

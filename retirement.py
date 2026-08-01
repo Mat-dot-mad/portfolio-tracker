@@ -174,6 +174,7 @@ def simulate_path(params, returns, rng, stop_on_failure=True):
     horizon = params["horizon_age"]
     records = []
     failed = False
+    cumulative_shortfall = 0.0
     ppk_installment = 0.0
     ppk_installments_left = 0
 
@@ -226,14 +227,23 @@ def simulate_path(params, returns, rng, stop_on_failure=True):
             shortfall = max(0.0, need)
 
         total = sum(b.value for b in buckets.values())
+        # What could actually be spent at this age. Total capital hides a bridge
+        # failure completely: the locked buckets keep compounding while spending
+        # goes unfunded, so the total line RISES through the very years the plan
+        # cannot pay for anything. This is the number that falls to zero.
+        reachable = sum(b.value for name, b in buckets.items()
+                        if _is_accessible(name, params, age))
+        cumulative_shortfall += shortfall
         records.append({
             "age": age,
             "total": total,
+            "reachable": reachable,
             "taxable": buckets[TAXABLE].value,
             "ike": buckets[IKE].value,
             "ikze": buckets[IKZE].value,
             "ppk": buckets[PPK].value,
             "shortfall": shortfall,
+            "cumulative_shortfall": cumulative_shortfall,
         })
 
         if shortfall > 1e-6:
@@ -314,16 +324,23 @@ def median_path(params, returns, paths=200, seed=None):
     length = min(len(r) for r in runs)
     out = []
     for i in range(length):
-        totals = sorted(r[i]["total"] for r in runs)
-        pick = lambda f: totals[min(len(totals) - 1, int(f * len(totals)))]
+        def percentile(key, f):
+            values = sorted(r[i][key] for r in runs)
+            return values[min(len(values) - 1, int(f * len(values)))]
+
         # Share of runs that have hit a shortfall at or before this age. This is
         # what turns "the line stops" into "this is where plans start failing".
         short = sum(1 for r in runs if any(y["shortfall"] > 1e-6 for y in r[:i + 1]))
         out.append({
             "age": runs[0][i]["age"],
-            "p10": pick(0.10),
-            "p50": pick(0.50),
-            "p90": pick(0.90),
+            "p10": percentile("total", 0.10),
+            "p50": percentile("total", 0.50),
+            "p90": percentile("total", 0.90),
+            # Spendable capital. Diverges from the totals above by exactly the
+            # amount sitting behind an age gate, which is the whole point of the
+            # bridge — and unlike the total, it reaches zero when a plan fails.
+            "reachable_p10": percentile("reachable", 0.10),
+            "reachable_p50": percentile("reachable", 0.50),
             "failed_share": short / len(runs),
         })
     return out
