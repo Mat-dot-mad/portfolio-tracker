@@ -980,6 +980,20 @@ def api_retirement():
     })
 
 
+@app.route("/api/retirement", methods=["DELETE"])
+def api_reset_retirement():
+    """Clear all saved planner settings.
+
+    Sliders persist silently on every change, so exploring a scenario
+    overwrites the real figures. This is the way back: with nothing stored the
+    planner falls back to defaults, including the saving rate derived from
+    actual cash-flow history.
+    """
+    with db.get_db() as conn:
+        removed = conn.execute("DELETE FROM retirement_settings").rowcount
+    return jsonify({"ok": True, "cleared": removed})
+
+
 @app.route("/api/retirement", methods=["POST"])
 def api_save_retirement():
     payload = request.get_json() or {}

@@ -14,6 +14,21 @@
         .text-positive { color: #198754; }
         .text-negative { color: #dc3545; }
         #loading { text-align: center; padding: 4rem 0; }
+
+        /* Levers */
+        .lever .lever-label { font-size: 0.75rem; text-transform: uppercase;
+                              letter-spacing: 0.4px; color: var(--bs-secondary-color); }
+        .lever-value { font-size: 1.2rem; font-weight: 700; line-height: 1.25; }
+        .lever-note { font-size: 0.72rem; color: var(--bs-secondary-color); min-height: 1.05rem; }
+        .lever.inactive { opacity: 0.45; }
+        .lever-ticks { position: relative; height: 0.9rem; font-size: 0.62rem;
+                       color: var(--bs-secondary-color); }
+        .lever-ticks span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+
+        /* Dim results during a recalculation without collapsing layout or
+           blanking the chart. */
+        .recalculating { opacity: 0.5; transition: opacity 0.12s ease; }
+
         .setting-row label { font-size: 0.85rem; margin-bottom: 0.15rem; }
         .setting-row input, .setting-row select { font-size: 0.9rem; }
         .setting-note { font-size: 0.75rem; color: var(--bs-secondary-color); }
@@ -27,7 +42,7 @@
 <nav class="navbar navbar-dark bg-dark mb-4">
     <div class="container">
         <span class="navbar-brand mb-0 h1">Portfolio Tracker</span>
-        <div class="d-flex align-items-center gap-2">
+        <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
             <a href="/" class="btn btn-sm btn-outline-light">Dashboard</a>
             <a href="/compare" class="btn btn-sm btn-outline-light">Compare</a>
             <a href="/forecast" class="btn btn-sm btn-outline-light">Forecast</a>
@@ -43,44 +58,45 @@
 
 <template id="retirement-template">
 <div>
-    <h4 class="mb-1">Retirement</h4>
+    <div class="d-flex justify-content-between align-items-center mb-1">
+        <h4 class="mb-0">Retirement</h4>
+        <span class="small" id="update-status"></span>
+    </div>
     <p class="text-muted small mb-4">
         A projection of what your assumptions imply — not financial advice, and not a
         recommendation to retire at any particular age. All figures are in
-        <strong>today's money</strong>, so returns are real (after inflation) and
-        spending stays constant in real terms.
+        <strong>today's money</strong>.
     </p>
 
     <!-- Headline results -->
-    <div class="row g-3 mb-4">
+    <div class="row g-3 mb-4" id="results-row">
         <div class="col-md-4">
-            <div class="card h-100">
-                <div class="card-body">
-                    <div class="card-label">Earliest feasible age</div>
-                    <div class="card-value" id="earliest-age">—</div>
-                    <div class="card-detail" id="earliest-detail"></div>
-                </div>
-            </div>
+            <div class="card h-100"><div class="card-body">
+                <div class="card-label">Earliest feasible age</div>
+                <div class="card-value" id="earliest-age">—</div>
+                <div class="card-detail" id="earliest-detail"></div>
+            </div></div>
         </div>
         <div class="col-md-4">
-            <div class="card h-100">
-                <div class="card-body">
-                    <div class="card-label">Success at chosen age</div>
-                    <div class="card-value" id="chosen-rate">—</div>
-                    <div class="card-detail" id="chosen-detail"></div>
-                </div>
-            </div>
+            <div class="card h-100"><div class="card-body">
+                <div class="card-label">Success at chosen age</div>
+                <div class="card-value" id="chosen-rate">—</div>
+                <div class="card-detail" id="chosen-detail"></div>
+            </div></div>
         </div>
         <div class="col-md-4">
-            <div class="card h-100">
-                <div class="card-body">
-                    <div class="card-label">Sustainable spend at chosen age</div>
-                    <div class="card-value" id="sustainable">—</div>
-                    <div class="card-detail">per year, today's money</div>
-                </div>
-            </div>
+            <div class="card h-100"><div class="card-body">
+                <div class="card-label">Sustainable spend at chosen age</div>
+                <div class="card-value" id="sustainable">—</div>
+                <div class="card-detail">per year, today's money</div>
+            </div></div>
         </div>
     </div>
+
+    <!-- Levers. Markup is generated from one config in retirement.js so the
+         ranges are defined in a single place. -->
+    <div class="row g-3 mb-3" id="levers-primary"></div>
+    <div class="row g-3 mb-4" id="levers-secondary"></div>
 
     <!-- Accessibility of current capital -->
     <div class="card mb-4">
@@ -104,40 +120,30 @@
         </div>
     </div>
 
-    <!-- Settings -->
+    <!-- Everything that rarely changes -->
     <div class="card mb-4">
         <div class="card-header bg-transparent d-flex justify-content-between align-items-center"
              style="cursor:pointer;" data-bs-toggle="collapse" data-bs-target="#settingsBody">
-            <h5 class="mb-0">Your details &amp; assumptions</h5>
+            <h5 class="mb-0">Assumptions &amp; personal details</h5>
             <span class="text-muted small">click to expand</span>
         </div>
-        <div class="collapse show" id="settingsBody">
+        <div class="collapse" id="settingsBody">
             <div class="card-body">
 
-                <h6 class="mb-2">About you</h6>
+                <h6 class="mb-2">You</h6>
                 <div class="row g-3 setting-row mb-3">
                     <div class="col-md-3"><label for="current_age">Current age</label>
                         <input type="number" class="form-control form-control-sm" id="current_age"></div>
-                    <div class="col-md-3"><label for="retirement_age">Planned retirement age</label>
-                        <input type="number" class="form-control form-control-sm" id="retirement_age"></div>
-                    <div class="col-md-3"><label for="horizon_age">Plan until age</label>
-                        <input type="number" class="form-control form-control-sm" id="horizon_age"></div>
                     <div class="col-md-3"><label for="success_threshold">Required success rate</label>
                         <input type="number" step="0.01" class="form-control form-control-sm" id="success_threshold">
-                        <div class="setting-note">0.90 = plan must survive in 90% of runs</div></div>
-                    <div class="col-md-3"><label for="annual_spending">Annual spending in retirement</label>
-                        <input type="number" class="form-control form-control-sm" id="annual_spending">
-                        <div class="setting-note">today's money</div></div>
-                    <div class="col-md-3"><label for="annual_savings">Annual savings until then</label>
-                        <input type="number" class="form-control form-control-sm" id="annual_savings">
-                        <div class="setting-note" id="annual_savings_note">excludes PPK, which comes from salary</div></div>
+                        <div class="setting-note">0.90 = must survive in 90% of runs</div></div>
                 </div>
 
                 <h6 class="mb-2">ZUS</h6>
                 <div class="row g-3 setting-row mb-3">
                     <div class="col-md-3"><label for="zus_annual">Projected pension, per year</label>
                         <input type="number" class="form-control form-control-sm" id="zus_annual">
-                        <div class="setting-note">from your ZUS letter / PUE, in today's money</div></div>
+                        <div class="setting-note">from your ZUS letter / PUE, today's money</div></div>
                     <div class="col-md-3"><label for="zus_start_age">Starts at age</label>
                         <input type="number" class="form-control form-control-sm" id="zus_start_age"></div>
                 </div>
@@ -168,9 +174,9 @@
 
                 <h6 class="mb-1">Polish rules</h6>
                 <div class="alert alert-warning py-2 small mb-2">
-                    These defaults reflect the general framework but limits are set annually
-                    and rates can change. <strong>Verify each against current rules</strong> —
-                    a stale figure here changes the answer without any visible sign.
+                    Limits are set annually and rates can change.
+                    <strong>Verify against current rules</strong> — a stale figure here changes
+                    the answer with no visible sign.
                 </div>
                 <div class="row g-3 setting-row mb-3">
                     <div class="col-md-3"><label for="ike_access_age">IKE accessible from</label>
@@ -189,22 +195,15 @@
                         <div class="setting-note">employed rate; self-employed is higher</div></div>
                 </div>
 
-                <h6 class="mb-2">Market assumptions</h6>
-                <div class="row g-3 setting-row mb-3">
-                    <div class="col-md-3"><label for="use_historical_returns">Return source</label>
-                        <select class="form-select form-select-sm" id="use_historical_returns">
-                            <option value="1">Bootstrap my history</option>
-                            <option value="0">Fixed rate</option></select></div>
-                    <div class="col-md-3"><label for="inflation_rate">Assumed inflation</label>
-                        <input type="number" step="0.001" class="form-control form-control-sm" id="inflation_rate">
-                        <div class="setting-note">used to convert returns to real terms</div></div>
-                    <div class="col-md-3"><label for="expected_real_return">Fixed real return</label>
-                        <input type="number" step="0.001" class="form-control form-control-sm" id="expected_real_return">
-                        <div class="setting-note">used only when source is "Fixed rate"</div></div>
+                <div class="d-flex align-items-center gap-3 pt-3 border-top flex-wrap">
+                    <button class="btn btn-outline-danger btn-sm" id="reset-btn"
+                            onclick="resetSettings()">Reset everything to defaults</button>
+                    <span class="setting-note mb-0" style="max-width: 34rem;">
+                        Sliders save as you move them, so exploring a scenario overwrites your
+                        real figures. This clears every saved value — the saving rate returns to
+                        the one derived from your cash-flow history.
+                    </span>
                 </div>
-
-                <button class="btn btn-primary" id="save-btn" onclick="saveAndRecalculate()">Save &amp; recalculate</button>
-                <span class="ms-2 small text-muted" id="save-status"></span>
             </div>
         </div>
     </div>
