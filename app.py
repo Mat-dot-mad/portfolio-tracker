@@ -527,6 +527,25 @@ def api_compare():
     })
 
 
+@app.route("/import")
+def import_page():
+    return render_template("import.html")
+
+
+@app.route("/api/snapshots")
+def api_snapshots():
+    """Just the quarter list.
+
+    The import page only needs this to fill its selector; loading the whole
+    dashboard payload would drag every position of every quarter across the
+    wire to populate a dropdown.
+    """
+    return jsonify([
+        {"id": s["id"], "quarter": s["quarter"], "snapshot_date": s["snapshot_date"]}
+        for s in db.get_snapshots()
+    ])
+
+
 @app.route("/api/manual-entries/<int:snapshot_id>", methods=["GET"])
 def api_get_manual_entries(snapshot_id):
     entries = db.get_manual_entries(snapshot_id)

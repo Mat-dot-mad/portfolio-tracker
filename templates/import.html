@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Add Data — Portfolio Tracker</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        #loading { text-align: center; padding: 4rem 0; }
+        .step-number {
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 1.6rem; height: 1.6rem; border-radius: 50%;
+            background: var(--bs-primary); color: #fff;
+            font-size: 0.85rem; font-weight: 700; margin-right: 0.5rem;
+        }
+        .card-note { font-size: 0.85rem; color: var(--bs-secondary-color); }
+    </style>
+</head>
+<body>
+
+<nav class="navbar navbar-dark bg-dark mb-4">
+    <div class="container">
+        <span class="navbar-brand mb-0 h1">Portfolio Tracker</span>
+        <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
+            <a href="/" class="btn btn-sm btn-outline-light">Dashboard</a>
+            <a href="/compare" class="btn btn-sm btn-outline-light">Compare</a>
+            <a href="/forecast" class="btn btn-sm btn-outline-light">Forecast</a>
+            <a href="/retirement" class="btn btn-sm btn-outline-light">Retirement</a>
+            <a href="/import" class="btn btn-sm btn-outline-light active">Add Data</a>
+            <button class="btn btn-sm btn-outline-light" id="themeToggle" onclick="toggleTheme()">Dark</button>
+        </div>
+    </div>
+</nav>
+
+<div class="container" id="app">
+    <div id="loading">Loading…</div>
+</div>
+
+<template id="import-template">
+<div>
+    <h4 class="mb-1">Add quarter data</h4>
+    <p class="text-muted small mb-4">
+        The three steps below are in the order they need to happen: the CSV creates
+        the quarter, the other two attach to it. Nothing here overwrites a quarter
+        you have not re-uploaded.
+    </p>
+
+    <!-- Step 1 — positions CSV -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <h5 class="card-title"><span class="step-number">1</span>Positions (CSV)</h5>
+            <p class="card-note">
+                The myFund.pl CSV export. This is what creates the quarter — the date
+                comes from the filename, e.g.
+                <code>myfund.pl_..._2026-03-31.csv</code>. Re-importing the same date
+                replaces that quarter's positions.
+            </p>
+            <div class="d-flex align-items-end gap-2 flex-wrap" style="max-width: 560px;">
+                <div class="flex-grow-1">
+                    <label for="csvFileInput" class="form-label fw-semibold">CSV file</label>
+                    <input type="file" id="csvFileInput" class="form-control" accept=".csv">
+                </div>
+                <button type="button" class="btn btn-primary" onclick="importCsv()" id="importBtn">Import</button>
+            </div>
+            <div id="importResult" class="mt-3"></div>
+        </div>
+    </div>
+
+    <!-- Step 2 — cash, PPK, mortgage -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <h5 class="card-title"><span class="step-number">2</span>Cash, PPK and mortgage</h5>
+            <p class="card-note">
+                Balances that are not in the broker export. Pick the quarter, fill in
+                what changed, and save. Foreign-currency cash is converted at the NBP
+                rate for that quarter's date.
+            </p>
+
+            <div class="d-flex align-items-end gap-2 mb-3 flex-wrap" style="max-width: 560px;">
+                <div class="flex-grow-1">
+                    <label for="entryQuarter" class="form-label fw-semibold">Quarter</label>
+                    <select id="entryQuarter" class="form-select"></select>
+                </div>
+                <button type="button" class="btn btn-outline-danger btn-sm"
+                        onclick="deleteSelectedSnapshot()" style="white-space: nowrap;">Delete quarter</button>
+            </div>
+
+            <h6>Cash positions</h6>
+            <div id="cashEntries"></div>
+            <button type="button" class="btn btn-outline-secondary btn-sm mb-3" onclick="addCashRow()">+ Add cash position</button>
+
+            <h6>PPK</h6>
+            <div class="row g-2 mb-3" style="max-width: 560px;">
+                <div class="col">
+                    <input type="number" step="0.01" id="ppkAmount" class="form-control" placeholder="PPK balance (PLN)">
+                </div>
+                <div class="col-auto">
+                    <input type="text" id="ppkLabel" class="form-control" value="PPK" placeholder="Label">
+                </div>
+            </div>
+
+            <h6>Mortgage</h6>
+            <div class="row g-2 mb-3" style="max-width: 560px;">
+                <div class="col">
+                    <input type="number" step="0.01" id="mortgageAmount" class="form-control" placeholder="Remaining amount (PLN)">
+                </div>
+                <div class="col-auto">
+                    <input type="text" id="mortgageLabel" class="form-control" value="Mortgage" placeholder="Label">
+                </div>
+            </div>
+
+            <button type="button" class="btn btn-primary" onclick="saveManualEntries()">Save</button>
+            <span id="saveStatus" class="ms-2 text-muted small"></span>
+        </div>
+    </div>
+
+    <!-- Step 3 — cash flows -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <h5 class="card-title"><span class="step-number">3</span>Contributions (XLSX)</h5>
+            <p class="card-note">
+                The myfund.pl <em>Wkład i wartość</em> export. This separates market
+                gains from money you paid in, so the Money In vs Value chart and every
+                return figure depend on it being current.
+                <strong>Re-importing replaces the whole history</strong>, so export the
+                full file each quarter rather than just the new rows.
+            </p>
+            <div class="d-flex align-items-end gap-2 flex-wrap" style="max-width: 560px;">
+                <div class="flex-grow-1">
+                    <label for="cashflowsFileInput" class="form-label fw-semibold">XLSX file</label>
+                    <input type="file" id="cashflowsFileInput" class="form-control" accept=".xlsx">
+                </div>
+                <button type="button" class="btn btn-primary" onclick="importCashflows()" id="cashflowsBtn">Import</button>
+            </div>
+            <div id="cashflowsResult" class="mt-3"></div>
+        </div>
+    </div>
+
+    <p class="text-muted small">
+        <a href="/">Back to the dashboard</a> once all three are done.
+    </p>
+</div>
+</template>
+
+<script src="{{ url_for('static', filename='common.js') }}"></script>
+<script src="{{ url_for('static', filename='import.js') }}"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

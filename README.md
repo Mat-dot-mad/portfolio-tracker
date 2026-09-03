@@ -6,6 +6,8 @@ Tailscale, backed up daily to Google Drive.
 
 ## Features
 
+- **Add Data tab** (`/import`) — the three steps for a new quarter in order: positions CSV,
+  then cash/PPK/mortgage, then the contributions XLSX
 - **CSV import** from myFund quarterly exports (auto-detects the snapshot date from the filename)
 - **Cash-flow import** from the myfund.pl "Wkład i wartość" XLSX export (contributions & withdrawals; idempotent re-import)
 - **Dashboard**: summary cards, timeline chart, Money In vs Value chart with lifetime returns, breakdown table, treemaps by tag and account
@@ -29,6 +31,8 @@ Tailscale, backed up daily to Google Drive.
 | `import_data.py` | myFund CSV parser |
 | `static/common.js` | Helpers shared by all pages (`formatPLN`, account badges, theme) |
 | `static/app.js`, `static/compare.js`, `static/forecast.js` | Dashboard, Compare, and Forecast frontends |
+| `static/retirement.js` | Retirement planner frontend |
+| `static/import.js` | Add Data page — the only frontend that writes data |
 | `templates/` | Jinja templates (`index`, `compare`, `forecast`, `login`) |
 | `tests/` | pytest suite (parsers, cash-flow aggregation, API, auth) |
 | `requirements.txt` | Runtime deps, pinned: flask, requests, gunicorn, openpyxl |

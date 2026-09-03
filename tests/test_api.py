@@ -212,7 +212,8 @@ class TestAuth:
         assert resp.status_code == 401
 
     def test_protected_routes_redirect_when_unauthenticated(self, auth_client):
-        for path in ("/", "/compare", "/forecast", "/api/dashboard"):
+        for path in ("/", "/compare", "/forecast", "/retirement", "/import",
+                     "/api/dashboard", "/api/snapshots"):
             resp = auth_client.get(path)
             assert resp.status_code == 302, path
             assert "/login" in resp.headers["Location"], path
@@ -331,3 +332,34 @@ class TestPpkIntegration:
         make_cash_flows(("2026-01-01", "deposit", 80_000.0))
         d = client.get("/api/dashboard").get_json()
         assert d["net_worth"] == pytest.approx(135_000)
+
+
+class TestImportPage:
+    """The import UI moved off the dashboard onto its own tab."""
+
+    def test_import_page_renders(self, client):
+        resp = client.get("/import")
+        assert resp.status_code == 200
+        assert b"import.js" in resp.data
+
+    def test_every_page_links_to_the_import_tab(self, client):
+        for path in ("/", "/compare", "/forecast", "/retirement", "/import"):
+            assert b'href="/import"' in client.get(path).data, path
+
+    def test_dashboard_no_longer_carries_the_import_forms(self, client):
+        """Two pages owning the same element ids would make getElementById
+        ambiguous and let a stale copy silently win."""
+        body = client.get("/").data
+        for element_id in (b'id="csvFileInput"', b'id="cashflowsFileInput"',
+                           b'id="entryQuarter"', b'id="cashEntries"'):
+            assert element_id not in body, element_id
+
+    def test_snapshots_endpoint_lists_quarters(self, client, make_snapshot):
+        make_snapshot("2025-Q4", "2025-12-31", portfolio=100_000.0)
+        make_snapshot("2026-Q1", "2026-03-31", portfolio=120_000.0)
+        rows = client.get("/api/snapshots").get_json()
+        assert [r["quarter"] for r in rows] == ["2026-Q1", "2025-Q4"]
+        assert set(rows[0]) == {"id", "quarter", "snapshot_date"}
+
+    def test_snapshots_endpoint_is_empty_before_any_import(self, client):
+        assert client.get("/api/snapshots").get_json() == []

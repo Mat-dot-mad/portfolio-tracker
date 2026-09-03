@@ -63,7 +63,7 @@ function initSelectors() {
     const quarters = compareData.quarters;
 
     const opts = quarters.map(q =>
-        `<option value="${q.id}">${q.quarter} (${q.snapshot_date})</option>`
+        `<option value="${q.id}">${q.quarter}</option>`
     ).join('');
     selectA.innerHTML = opts;
     selectB.innerHTML = opts;

@@ -87,6 +87,7 @@
             <a href="/compare" class="btn btn-sm btn-outline-light">Compare</a>
             <a href="/forecast" class="btn btn-sm btn-outline-light">Forecast</a>
             <a href="/retirement" class="btn btn-sm btn-outline-light">Retirement</a>
+            <a href="/import" class="btn btn-sm btn-outline-light">Add Data</a>
             <button class="btn btn-sm btn-outline-light" id="themeToggle" onclick="toggleTheme()">Dark</button>
         </div>
     </div>
@@ -202,105 +203,6 @@
                         <canvas id="chartAccount"></canvas>
                     </div>
                 </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Import CSV -->
-    <div class="card mb-4">
-        <div class="card-header bg-transparent d-flex justify-content-between align-items-center"
-             style="cursor: pointer;"
-             data-bs-toggle="collapse" data-bs-target="#importCsvBody">
-            <h5 class="mb-0">Import CSV</h5>
-            <span class="text-muted small">click to expand</span>
-        </div>
-        <div class="collapse" id="importCsvBody">
-            <div class="card-body">
-                <p class="text-muted small">Upload a myFund.pl CSV export. The date is extracted from the filename (e.g. <code>myfund.pl_..._2026-03-31.csv</code>).</p>
-                <div class="d-flex align-items-end gap-2" style="max-width: 500px;">
-                    <div class="flex-grow-1">
-                        <label for="csvFileInput" class="form-label fw-semibold">CSV File</label>
-                        <input type="file" id="csvFileInput" class="form-control" accept=".csv">
-                    </div>
-                    <button type="button" class="btn btn-primary" onclick="importCsv()" id="importBtn">Import</button>
-                </div>
-                <div id="importResult" class="mt-3"></div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Import Cash Flows (XLSX) -->
-    <div class="card mb-4">
-        <div class="card-header bg-transparent d-flex justify-content-between align-items-center"
-             style="cursor: pointer;"
-             data-bs-toggle="collapse" data-bs-target="#importCashflowsBody">
-            <h5 class="mb-0">Import Cash Flows</h5>
-            <span class="text-muted small">click to expand</span>
-        </div>
-        <div class="collapse" id="importCashflowsBody">
-            <div class="card-body">
-                <p class="text-muted small">
-                    Upload a myfund.pl <em>Wkład i wartość</em> XLSX export with all contributions and withdrawals.
-                    Re-importing replaces the entire history (idempotent), so re-export the full file each time you add a new quarter.
-                </p>
-                <div class="d-flex align-items-end gap-2" style="max-width: 500px;">
-                    <div class="flex-grow-1">
-                        <label for="cashflowsFileInput" class="form-label fw-semibold">XLSX File</label>
-                        <input type="file" id="cashflowsFileInput" class="form-control" accept=".xlsx">
-                    </div>
-                    <button type="button" class="btn btn-primary" onclick="importCashflows()" id="cashflowsBtn">Import</button>
-                </div>
-                <div id="cashflowsResult" class="mt-3"></div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Quarterly Entry (collapsed by default) -->
-    <div class="card mb-4">
-        <div class="card-header bg-transparent d-flex justify-content-between align-items-center"
-             style="cursor: pointer;"
-             data-bs-toggle="collapse" data-bs-target="#quarterlyEntryBody">
-            <h5 class="mb-0">Quarterly Entry</h5>
-            <span class="text-muted small">click to expand</span>
-        </div>
-        <div class="collapse" id="quarterlyEntryBody">
-            <div class="card-body">
-                <p class="text-muted small">Add cash balances and mortgage for a specific quarter.</p>
-
-                <div class="d-flex align-items-end gap-2 mb-3" style="max-width: 500px;">
-                    <div class="flex-grow-1">
-                        <label for="entryQuarter" class="form-label fw-semibold">Quarter</label>
-                        <select id="entryQuarter" class="form-select"></select>
-                    </div>
-                    <button type="button" class="btn btn-outline-danger btn-sm" onclick="deleteSelectedSnapshot()" style="white-space: nowrap;">Delete Quarter</button>
-                </div>
-
-                <h6>Cash Positions</h6>
-                <div id="cashEntries"></div>
-                <button type="button" class="btn btn-outline-secondary btn-sm mb-3" onclick="addCashRow()">+ Add Cash Position</button>
-
-                <h6>PPK</h6>
-                <div class="row g-2 mb-3" style="max-width: 500px;">
-                    <div class="col">
-                        <input type="number" step="0.01" id="ppkAmount" class="form-control" placeholder="PPK balance (PLN)">
-                    </div>
-                    <div class="col-auto">
-                        <input type="text" id="ppkLabel" class="form-control" value="PPK" placeholder="Label">
-                    </div>
-                </div>
-
-                <h6>Mortgage</h6>
-                <div class="row g-2 mb-3" style="max-width: 500px;">
-                    <div class="col">
-                        <input type="number" step="0.01" id="mortgageAmount" class="form-control" placeholder="Remaining amount (PLN)">
-                    </div>
-                    <div class="col-auto">
-                        <input type="text" id="mortgageLabel" class="form-control" value="Mortgage" placeholder="Label">
-                    </div>
-                </div>
-
-                <button type="button" class="btn btn-primary" onclick="saveManualEntries()">Save</button>
-                <span id="saveStatus" class="ms-2 text-muted small"></span>
             </div>
         </div>
     </div>
