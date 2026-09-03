@@ -672,10 +672,6 @@ async function loadRetirement() {
     appEl.innerHTML = '';
     appEl.appendChild(document.getElementById('retirement-template').content.cloneNode(true));
 
-    const btn = document.getElementById('themeToggle');
-    if (btn) btn.textContent =
-        document.documentElement.getAttribute('data-bs-theme') === 'dark' ? 'Light' : 'Dark';
-
     buildLevers();
     fillForm(data.settings, data);
     refreshLeverLabels();

@@ -408,10 +408,6 @@ async function loadForecast() {
     app.innerHTML = '';
     app.appendChild(tpl.content.cloneNode(true));
 
-    // Theme toggle button text reflects current theme
-    const tbtn = document.getElementById('themeToggle');
-    if (tbtn) tbtn.textContent = document.documentElement.getAttribute('data-bs-theme') === 'dark' ? 'Light' : 'Dark';
-
     historicalStats = computeHistoricalStats(timeline);
     showHistoricalDefaultsHints();
     setSlidersToHistorical();

@@ -35,18 +35,30 @@ let waterfallChart = null;
 async function loadCompare(idA, idB) {
     const params = (idA && idB) ? `?a=${idA}&b=${idB}` : '';
     const resp = await fetch(`/api/compare${params}`);
-    compareData = await resp.json();
+    const payload = await resp.json();
 
     const app = document.getElementById('app');
+
+    // With no snapshots the API answers 404. Parsing that as data left the
+    // page as a dead skeleton with empty selectors, because initSelectors()
+    // then mapped over an undefined quarters list. Forecast and Retirement
+    // already say why they are empty; this now matches them.
+    if (!resp.ok) {
+        app.innerHTML = `<div class="alert alert-info">
+            ${payload.error || 'Comparison unavailable.'}
+            Comparing quarters needs at least two snapshots —
+            <a href="/import" class="alert-link">add quarter data</a> to get started.
+        </div>`;
+        return;
+    }
+
+    compareData = payload;
     const template = document.getElementById('compare-template');
 
     // Only replace contents on first load
     if (!document.getElementById('selectA')) {
         app.innerHTML = '';
         app.appendChild(template.content.cloneNode(true));
-
-        const btn = document.getElementById('themeToggle');
-        if (btn) btn.textContent = document.documentElement.getAttribute('data-bs-theme') === 'dark' ? 'Light' : 'Dark';
 
         initSelectors();
     }

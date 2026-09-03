@@ -363,3 +363,20 @@ class TestImportPage:
 
     def test_snapshots_endpoint_is_empty_before_any_import(self, client):
         assert client.get("/api/snapshots").get_json() == []
+
+
+class TestEmptyStates:
+    """A database with no snapshots must explain itself, not render a dead page.
+
+    Compare used to parse its own 404 as data and then map over an undefined
+    quarters list, leaving empty selectors and no message at all.
+    """
+
+    def test_compare_api_reports_why_it_is_empty(self, client):
+        resp = client.get("/api/compare")
+        assert resp.status_code == 404
+        assert "error" in resp.get_json()
+
+    def test_pages_still_render_with_no_data(self, client):
+        for path in ("/", "/compare", "/forecast", "/retirement", "/import"):
+            assert client.get(path).status_code == 200, path

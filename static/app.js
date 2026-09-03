@@ -28,14 +28,22 @@ async function loadDashboard() {
     dashboardData = await resp.json();
 
     const app = document.getElementById('app');
+
+    // Before the imports moved to their own tab they were on this page, so an
+    // empty dashboard still showed you what to do. Now it would be four "0 zł"
+    // cards and blank charts with no next step anywhere but the nav.
+    if (!dashboardData.timeline || !dashboardData.timeline.length) {
+        app.innerHTML = `<div class="text-center py-5">
+            <h4 class="mb-2">No quarters yet</h4>
+            <p class="text-muted">Import a myFund CSV export and this fills in.</p>
+            <a href="/import" class="btn btn-primary">Add quarter data</a>
+        </div>`;
+        return;
+    }
+
     const template = document.getElementById('dashboard-template');
     app.innerHTML = '';
     app.appendChild(template.content.cloneNode(true));
-
-    // Update theme toggle button text
-    const theme = document.documentElement.getAttribute('data-bs-theme');
-    const btn = document.getElementById('themeToggle');
-    if (btn) btn.textContent = theme === 'dark' ? 'Light' : 'Dark';
 
     renderSummaryCards();
     renderTimelineChart();
