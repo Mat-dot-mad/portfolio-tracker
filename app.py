@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import json
+import math
 import os
 import random
 import re
@@ -12,6 +13,8 @@ import gemini
 import nbp
 import import_data
 import retirement
+import performance
+import import_workflow
 
 app = Flask(__name__)
 # SECRET_KEY signs the session cookie so the browser cannot forge "authenticated".
@@ -183,6 +186,8 @@ def _build_dashboard_data():
             t["net_contributions"] = 0
             t["cumulative_invested"] = 0
 
+    performance.annotate(timeline)
+
     # Lifetime aggregates: invested vs. current wealth.
     # Market gains = (current portfolio + current cash) − net invested.
     # Mortgage isn't part of "what we put in" — it's a separate liability.
@@ -293,11 +298,8 @@ def _build_commentary_payload(data):
     prev_nw = prev["portfolio_total"] + prev["cash_total"] - prev["mortgage_total"]
     contributions = curr.get("net_contributions") or 0
 
-    # Market-only return: strip contributions out of the net-worth move, the
-    # same definition the forecast page uses.
-    market_return_pct = None
-    if prev_nw:
-        market_return_pct = round((curr_nw - prev_nw - contributions) / abs(prev_nw) * 100, 1)
+    period_return = curr.get("market_return")
+    market_return_pct = round(period_return * 100, 1) if period_return is not None else None
 
     # Contribution pace vs. the previous four quarters (excluding this one and
     # the first snapshot, whose figure includes lumped pre-snapshot history).
@@ -374,8 +376,10 @@ def _build_commentary_payload(data):
             "notable_positions[].value_change_pct is the change in the position's "
             "VALUE. It reflects buying or selling as well as price movement, so it "
             "must NOT be described as the security appreciating or performing.",
-            "Only portfolio-level market_return_pct_excluding_contributions has "
-            "contributions removed. Position-level figures do not.",
+            "Only market_return_pct_excluding_contributions has contributions "
+            "removed. It measures investments plus cash, excluding PPK and mortgage "
+            "debt, and approximates contributions as arriving at period end. "
+            "Position-level figures do not remove contributions.",
         ],
     }
 
@@ -587,156 +591,12 @@ def api_delete_snapshot(snapshot_id):
 
 @app.route("/api/import-csv", methods=["POST"])
 def api_import_csv():
-    """Import a myFund CSV export via file upload."""
-    if "file" not in request.files:
-        return jsonify({"error": "No file provided"}), 400
-
-    f = request.files["file"]
-    if not f.filename or not f.filename.endswith(".csv"):
-        return jsonify({"error": "Please upload a .csv file"}), 400
-
-    # Extract date from filename
-    snapshot_date = import_data.extract_date_from_filename(f.filename)
-    if not snapshot_date:
-        return jsonify({"error": f"Could not extract a date from filename '{f.filename}'. Expected format: something_YYYY-MM-DD.csv"}), 400
-
-    # Check for duplicate
-    existing_dates = {s["snapshot_date"] for s in db.get_snapshots()}
-    if snapshot_date in existing_dates:
-        return jsonify({"error": f"Date {snapshot_date} is already imported. Delete the existing snapshot first if you want to re-import."}), 409
-
-    # Save to a temp file so parse_csv can read it
-    import tempfile, os
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".csv")
-    try:
-        f.save(tmp)
-        tmp.close()
-
-        positions = import_data.parse_csv(tmp.name)
-        if not positions:
-            return jsonify({"error": "No positions found in the CSV file. Check that the file is a valid myFund export."}), 400
-
-        quarter = import_data.date_to_quarter(snapshot_date)
-        snapshot_id = db.create_snapshot(quarter, snapshot_date)
-        db.insert_positions(snapshot_id, positions)
-
-        total_value = sum(p["value_pln"] for p in positions)
-        return jsonify({
-            "ok": True,
-            "quarter": quarter,
-            "snapshot_date": snapshot_date,
-            "positions_count": len(positions),
-            "total_value": total_value,
-            "snapshot_id": snapshot_id,
-        })
-    finally:
-        os.unlink(tmp.name)
+    return import_workflow.handle_upload("csv")
 
 
 @app.route("/api/import-cashflows", methods=["POST"])
 def api_import_cashflows():
-    """Import a myfund.pl 'Wkład i wartość' XLSX export.
-
-    Wipes the cash_flows table and inserts every row from the file. The user's
-    workflow is to re-export the full history each quarter, so idempotent
-    replace-all is the simplest correct behavior.
-
-    Expected columns (Polish from myfund.pl): Data, Operacja, Wartość, Waluta,
-    Kurs, Wartość [PLN], Konto, Portfel.
-    """
-    if "file" not in request.files:
-        return jsonify({"error": "No file provided"}), 400
-
-    f = request.files["file"]
-    if not f.filename or not f.filename.lower().endswith(".xlsx"):
-        return jsonify({"error": "Please upload an .xlsx file"}), 400
-
-    import openpyxl
-    import tempfile
-
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
-    try:
-        f.save(tmp)
-        tmp.close()
-
-        try:
-            wb = openpyxl.load_workbook(tmp.name, read_only=True, data_only=True)
-        except Exception as e:
-            return jsonify({"error": f"Could not open as XLSX: {e}"}), 400
-
-        ws = wb.active
-        rows = list(ws.iter_rows(values_only=True))
-        if len(rows) < 2:
-            return jsonify({"error": "File appears empty (no data rows)"}), 400
-
-        # The parser below reads columns BY POSITION, so a reordered or shifted
-        # column layout would silently import wrong numbers. Validate the header
-        # row first and fail loudly instead.
-        EXPECTED_HEADER = ("Data", "Operacja", "Wartość", "Waluta", "Kurs", "Wartość [PLN]", "Konto")
-        header = tuple(str(h).strip() if h is not None else "" for h in rows[0][:7])
-        if header != EXPECTED_HEADER:
-            return jsonify({
-                "error": (
-                    f"Unexpected column layout: {list(header)}. "
-                    f"Expected: {list(EXPECTED_HEADER)}. "
-                    "Is this a myfund.pl 'Wkład i wartość' export?"
-                )
-            }), 400
-
-        # Map operation strings to canonical values
-        OP_MAP = {
-            "Wpłata automatyczna": "deposit",
-            "Wypłata automatyczna": "withdrawal",
-        }
-
-        events = []
-        skipped = 0
-        for row in rows[1:]:
-            if not row or row[0] is None:
-                continue
-            data, operacja, wartosc, waluta, kurs, wartosc_pln, konto = row[:7]
-
-            op = OP_MAP.get(operacja)
-            if op is None:
-                skipped += 1
-                continue
-            if wartosc_pln is None:
-                skipped += 1
-                continue
-
-            # Date can be a datetime object (most common) or a string
-            if hasattr(data, "strftime"):
-                event_date = data.strftime("%Y-%m-%d")
-            else:
-                event_date = str(data)[:10]
-
-            events.append({
-                "event_date": event_date,
-                "operation": op,
-                "value_pln": float(wartosc_pln),
-                "currency": waluta,
-                "original_value": float(wartosc) if wartosc is not None else None,
-                "account": konto,
-            })
-
-        if not events:
-            return jsonify({"error": "No valid rows found. Are the operation labels in Polish?"}), 400
-
-        db.replace_cash_flows(events)
-        summary = db.get_cash_flow_summary()
-
-        return jsonify({
-            "ok": True,
-            "imported": len(events),
-            "skipped": skipped,
-            "deposited": summary["deposited"],
-            "withdrawn": summary["withdrawn"],
-            "net_invested": summary["net_invested"],
-            "earliest_date": summary["earliest_date"],
-            "latest_date": summary["latest_date"],
-        })
-    finally:
-        os.unlink(tmp.name)
+    return import_workflow.handle_upload("cashflows")
 
 
 # --- Retirement planner ---------------------------------------------------
@@ -892,8 +752,8 @@ def _geometric_mean(returns):
 def _real_return_pool(data, inflation_rate, size=2000, seed=12345):
     """Annual REAL returns to bootstrap from.
 
-    Quarterly net-worth market returns (contributions removed, as on the
-    forecast page) are deflated to real terms, then sampled in groups of four
+    Shared investment returns (contributions, PPK and mortgage excluded)
+    are deflated to real terms, then sampled in groups of four
     and compounded. Sampling quarters rather than whole years keeps the sample
     size usable — 18 quarters would otherwise yield only four annual figures.
 
@@ -904,18 +764,8 @@ def _real_return_pool(data, inflation_rate, size=2000, seed=12345):
     and state contribution is scored as market return — and the planner then
     compounds that error across a lifetime.
     """
-    timeline = data["timeline"]
-    quarterly = []
-    for i in range(1, len(timeline)):
-        prev, curr = timeline[i - 1], timeline[i]
-        prev_nw = (prev["portfolio_total"] - prev.get("ppk_total", 0)
-                   + prev["cash_total"] - prev["mortgage_total"])
-        curr_nw = (curr["portfolio_total"] - curr.get("ppk_total", 0)
-                   + curr["cash_total"] - curr["mortgage_total"])
-        if prev_nw <= 0:
-            continue
-        contrib = curr.get("net_contributions") or 0
-        quarterly.append((curr_nw - prev_nw - contrib) / prev_nw)
+    quarterly = [t["market_return"] for t in data["timeline"]
+                 if t.get("market_return") is not None]
 
     if not quarterly:
         return None
@@ -975,12 +825,15 @@ def retirement_page():
 
 @app.route("/api/retirement", methods=["GET"])
 def api_retirement():
-    """Run the planner with the stored settings."""
+    """Run the saved baseline against the latest balances."""
+    return _retirement_result(db.get_retirement_settings())
+
+
+def _retirement_result(settings):
     data = _build_dashboard_data()
     if not data["timeline"]:
         return jsonify({"available": False, "reason": "No snapshots yet"})
 
-    settings = db.get_retirement_settings()
     params, balances, basis_ratio = _retirement_params(settings, data)
 
     if params["use_historical_returns"]:
@@ -996,7 +849,8 @@ def api_retirement():
     threshold = params["success_threshold"]
     age, rate = retirement.earliest_feasible_age(
         params, returns, threshold=threshold, paths=300,
-        min_age=int(params["current_age"]) + 1, max_age=75, seed=42)
+        min_age=int(params["current_age"]) + 1,
+        max_age=min(75, int(params["horizon_age"]) - 1), seed=42)
 
     chosen = retirement.success_rate(params, returns, paths=300, seed=42)
 
@@ -1014,6 +868,7 @@ def api_retirement():
 
     return jsonify({
         "available": True,
+        "snapshot_date": data["latest"]["snapshot_date"],
         # Report the values actually simulated. annual_savings can be derived
         # from cash-flow history rather than taken from the static default, and
         # the form must show what was used or the two silently disagree.
@@ -1055,10 +910,9 @@ def api_retirement():
 def api_reset_retirement():
     """Clear all saved planner settings.
 
-    Sliders persist silently on every change, so exploring a scenario
-    overwrites the real figures. This is the way back: with nothing stored the
-    planner falls back to defaults, including the saving rate derived from
-    actual cash-flow history.
+    Explicit baseline reset. Named scenarios remain stored separately.
+    With nothing stored the planner falls back to defaults, including the
+    saving rate derived from actual cash-flow history.
     """
     with db.get_db() as conn:
         removed = conn.execute("DELETE FROM retirement_settings").rowcount
@@ -1067,13 +921,90 @@ def api_reset_retirement():
 
 @app.route("/api/retirement", methods=["POST"])
 def api_save_retirement():
-    payload = request.get_json() or {}
-    # Only persist keys the planner knows about, so a malformed request can't
-    # pollute the settings table.
-    known = {k: v for k, v in payload.items() if k in RETIREMENT_DEFAULTS}
-    if known:
-        db.save_retirement_settings(known)
+    try:
+        known = _validated_retirement_settings(request.get_json())
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    db.save_retirement_settings(known)
     return jsonify({"ok": True, "saved": sorted(known)})
+
+
+def _validated_retirement_settings(payload):
+    if not isinstance(payload, dict):
+        raise ValueError("Settings must be an object")
+    known = {}
+    age_keys = {"current_age", "retirement_age", "horizon_age", "ike_access_age",
+                "ikze_access_age", "zus_start_age", "ppk_access_age"}
+    rate_keys = {"belka_rate", "ikze_withdrawal_rate", "ppk_employee_rate",
+                 "ppk_employer_rate", "ppk_lump_sum_fraction", "success_threshold"}
+    for key, raw in payload.items():
+        if key not in RETIREMENT_DEFAULTS:
+            continue
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            raise ValueError(f"{key}: enter a number") from None
+        if not math.isfinite(value):
+            raise ValueError(f"{key}: enter a finite number")
+        if key in age_keys:
+            valid = value.is_integer() and 0 <= value <= 120
+        elif key == "ppk_installment_years":
+            valid = value.is_integer() and 1 <= value <= 100
+        elif key in {"use_historical_returns", "ppk_enabled"}:
+            valid = value in (0, 1)
+        elif key in rate_keys:
+            valid = 0 <= value <= 1 and (key != "success_threshold" or value > 0)
+        elif key in {"expected_real_return", "inflation_rate"}:
+            valid = -1 < value <= 1
+        else:
+            valid = 0 <= value <= 1e12
+        if not valid:
+            raise ValueError(f"{key}: value outside the supported range")
+        known[key] = value
+    merged = {**RETIREMENT_DEFAULTS, **db.get_retirement_settings(), **known}
+    if not float(merged["current_age"]) <= float(merged["retirement_age"]) < float(merged["horizon_age"]):
+        raise ValueError("Retirement age must be at least your current age and before the planning horizon")
+    return known
+
+
+@app.route("/api/retirement/preview", methods=["POST"])
+def api_preview_retirement():
+    """Calculate temporary assumptions without writing any baseline settings."""
+    try:
+        settings = _validated_retirement_settings(request.get_json())
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    return _retirement_result({**db.get_retirement_settings(), **settings})
+
+
+@app.route("/api/retirement/scenarios", methods=["GET", "POST"])
+@app.route("/api/retirement/scenarios/<int:scenario_id>", methods=["PUT", "DELETE"])
+def api_retirement_scenarios(scenario_id=None):
+    if request.method == "GET":
+        return jsonify(db.get_retirement_scenarios())
+    if request.method == "DELETE":
+        with db.get_db() as conn:
+            changed = conn.execute("DELETE FROM retirement_scenarios WHERE id=?", (scenario_id,)).rowcount
+        return (jsonify(ok=True), 200) if changed else (jsonify(error="Scenario not found"), 404)
+    payload = request.get_json()
+    if not isinstance(payload, dict):
+        return jsonify(error="Scenario must be an object"), 400
+    name = payload.get("name")
+    if not isinstance(name, str) or not 1 <= len(name.strip()) <= 100:
+        return jsonify(error="Enter a scenario name (1–100 characters)"), 400
+    try:
+        settings = _validated_retirement_settings(payload.get("settings"))
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    # Store complete effective assumptions so later baseline edits do not
+    # silently change a saved scenario. Balances always come from live data.
+    data = _build_dashboard_data()
+    params, _, _ = _retirement_params({**db.get_retirement_settings(), **settings}, data)
+    effective = {k: params[k] for k in RETIREMENT_DEFAULTS}
+    sid = db.save_retirement_scenario(name.strip(), effective, scenario_id)
+    if sid is None:
+        return jsonify(error="Scenario not found"), 404
+    return jsonify(ok=True, id=sid)
 
 
 def create_app():

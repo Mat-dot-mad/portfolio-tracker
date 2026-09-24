@@ -265,10 +265,12 @@ def simulate_path(params, returns, rng, stop_on_failure=True):
 
 def success_rate(params, returns, paths=500, seed=None):
     """Fraction of runs that fund spending to the horizon."""
+    # Each path gets its own stream: failing early must not shift the
+    # return sequences used by later paths or by another scenario.
     rng = random.Random(seed)
     survived = 0
     for _ in range(paths):
-        ok, _ = simulate_path(params, returns, rng)
+        ok, _ = simulate_path(params, returns, random.Random(rng.getrandbits(64)))
         survived += 1 if ok else 0
     return survived / paths
 
@@ -323,7 +325,7 @@ def median_path(params, returns, paths=200, seed=None):
     better than they were.
     """
     rng = random.Random(seed)
-    runs = [simulate_path(params, returns, rng, stop_on_failure=False)[1]
+    runs = [simulate_path(params, returns, random.Random(rng.getrandbits(64)), stop_on_failure=False)[1]
             for _ in range(paths)]
     if not runs:
         return []
@@ -366,7 +368,7 @@ def representative_run(params, returns, paths=200, seed=None):
     run is identical and the choice is moot.
     """
     rng = random.Random(seed)
-    runs = [simulate_path(params, returns, rng, stop_on_failure=False)[1]
+    runs = [simulate_path(params, returns, random.Random(rng.getrandbits(64)), stop_on_failure=False)[1]
             for _ in range(paths)]
     runs = [r for r in runs if r]
     if not runs:
@@ -380,6 +382,6 @@ def first_shortfall_ages(params, returns, paths=200, seed=None):
     rng = random.Random(seed)
     ages = []
     for _ in range(paths):
-        _ok, rec = simulate_path(params, returns, rng, stop_on_failure=True)
+        _ok, rec = simulate_path(params, returns, random.Random(rng.getrandbits(64)), stop_on_failure=True)
         ages.append(next((y["age"] for y in rec if y["shortfall"] > 1e-6), None))
     return ages

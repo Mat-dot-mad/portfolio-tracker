@@ -5,8 +5,7 @@
 // controls, the results and the chart.
 //
 // Six sliders carry the assumptions worth exploring; everything else sits in a
-// collapsed panel because it is set once and then forgotten. Slider changes
-// save automatically, so resetSettings() is the way back to defaults.
+// collapsed panel. Slider changes preview a draft; saving is always explicit.
 
 const SETTING_KEYS = [
     'current_age', 'retirement_age', 'horizon_age', 'success_threshold',
@@ -23,6 +22,9 @@ const SETTING_KEYS = [
 const DEBOUNCE_MS = 250;
 
 let planData = null;
+let baselineData = null;
+let savedScenarios = [];
+let selectedScenarioId = null;
 let retirementChart = null;
 let debounceTimer = null;
 // Requests can overlap while dragging; only the newest may be applied, or a
@@ -600,7 +602,8 @@ function setBusy(busy) {
 
 function scheduleUpdate() {
     clearTimeout(debounceTimer);
-    setStatus('editing…');
+    ++requestSeq; // invalidate in-flight results immediately, before debounce
+    setStatus('Unsaved changes');
     debounceTimer = setTimeout(runUpdate, DEBOUNCE_MS);
 }
 
@@ -610,14 +613,7 @@ async function runUpdate() {
     setStatus('calculating…');
 
     try {
-        const save = await fetch('/api/retirement', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(readForm()),
-        });
-        if (!save.ok) throw new Error(`could not save (${save.status})`);
-
-        const data = await (await fetch('/api/retirement')).json();
+        const data = await retirementRequest('/api/retirement/preview', 'POST', readForm());
         // A newer drag superseded this request — drop the stale result.
         if (seq !== requestSeq) return;
         if (!data.available) throw new Error(data.reason || 'unavailable');
@@ -626,7 +622,8 @@ async function runUpdate() {
         renderChart(data);      // sets chartUsesLogScale, read by renderResults
         renderResults(data);
         refreshLeverLabels();
-        setStatus('saved', 'text-success');
+        renderScenarioComparison();
+        setStatus('Draft calculated · baseline unchanged', 'text-success');
     } catch (err) {
         if (seq !== requestSeq) return;
         setStatus(err.message, 'text-danger');
@@ -636,10 +633,12 @@ async function runUpdate() {
 }
 
 async function resetSettings() {
+    if (!confirm('Reset your saved baseline to defaults? Named scenarios will be kept.')) return;
+    cancelPendingCalculation();
     const btn = document.getElementById('reset-btn');
     btn.disabled = true;
     try {
-        await fetch('/api/retirement', { method: 'DELETE' });
+        await retirementRequest('/api/retirement', 'DELETE');
         await loadRetirement();      // rebuild from defaults
         setStatus('reset to defaults', 'text-success');
     } catch (err) {
@@ -648,6 +647,114 @@ async function resetSettings() {
         const b = document.getElementById('reset-btn');
         if (b) b.disabled = false;
     }
+}
+
+// ── Explicit baseline and scenario actions ──────────────────────
+
+async function retirementRequest(url, method = 'GET', body) {
+    const response = await fetch(url, {
+        method,
+        ...(body === undefined ? {} : {
+            headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
+        }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
+    return data;
+}
+
+function cancelPendingCalculation() {
+    clearTimeout(debounceTimer);
+    ++requestSeq;
+    setBusy(false);
+}
+
+async function refreshScenarios() {
+    savedScenarios = await retirementRequest('/api/retirement/scenarios');
+    const select = document.getElementById('scenario-select');
+    select.replaceChildren(new Option('Baseline', ''));
+    savedScenarios.forEach(s => select.add(new Option(s.name, s.id)));
+    select.value = selectedScenarioId || '';
+    document.getElementById('delete-scenario').disabled = !selectedScenarioId;
+}
+
+function renderScenarioComparison() {
+    if (!baselineData || !planData) return;
+    const b = baselineData, d = planData;
+    const table = document.createElement('table');
+    table.className = 'table table-sm small mb-0';
+    const rows = [
+        ['Input / result', 'Baseline', 'Current draft'],
+        ['Retirement age', b.settings.retirement_age, d.settings.retirement_age],
+        ['Annual spending', formatPLN(b.settings.annual_spending), formatPLN(d.settings.annual_spending)],
+        ['Annual savings', formatPLN(b.settings.annual_savings), formatPLN(d.settings.annual_savings)],
+        ['Success at chosen age', formatPct(b.chosen_age_success_rate), formatPct(d.chosen_age_success_rate)],
+        ['First shortfall age (median among failed runs)', b.median_first_shortfall_age ?? 'None', d.median_first_shortfall_age ?? 'None'],
+        ['Sustainable annual spending', formatPLN(b.sustainable_spending_at_chosen_age), formatPLN(d.sustainable_spending_at_chosen_age)],
+    ];
+    rows.forEach((values, index) => {
+        const row = table.insertRow();
+        values.forEach(value => {
+            const cell = document.createElement(index === 0 ? 'th' : 'td');
+            cell.textContent = value;
+            row.appendChild(cell);
+        });
+    });
+    document.getElementById('scenario-comparison').replaceChildren(table);
+    document.getElementById('scenario-note').textContent =
+        `Balances as of ${d.snapshot_date}. Comparisons use the same random seed. Inputs above are compared after calculation completes.`;
+}
+
+async function loadSelectedScenario() {
+    cancelPendingCalculation();
+    const select = document.getElementById('scenario-select');
+    selectedScenarioId = select.value ? Number(select.value) : null;
+    const scenario = savedScenarios.find(s => s.id === selectedScenarioId);
+    document.getElementById('scenario-name').value = scenario ? scenario.name : '';
+    document.getElementById('delete-scenario').disabled = !scenario;
+    fillForm(scenario ? scenario.settings : baselineData.settings, baselineData);
+    refreshLeverLabels();
+    await runUpdate();
+}
+
+async function discardScenario() {
+    await loadSelectedScenario();
+}
+
+async function saveScenario(asNew = false) {
+    cancelPendingCalculation();
+    const id = asNew ? null : selectedScenarioId;
+    try {
+        const result = await retirementRequest('/api/retirement/scenarios' + (id ? `/${id}` : ''), id ? 'PUT' : 'POST', {
+            name: document.getElementById('scenario-name').value,
+            settings: readForm(),
+        });
+        selectedScenarioId = result.id;
+        await refreshScenarios();
+        await runUpdate();
+        setStatus('Scenario saved · baseline unchanged', 'text-success');
+    } catch (err) { setStatus(err.message, 'text-danger'); }
+}
+
+async function updateBaseline() {
+    if (!confirm('Replace your saved baseline with the current inputs?')) return;
+    cancelPendingCalculation();
+    try {
+        await retirementRequest('/api/retirement', 'POST', readForm());
+        await loadRetirement();
+        setStatus('Baseline updated', 'text-success');
+    } catch (err) { setStatus(err.message, 'text-danger'); }
+}
+
+async function deleteScenario() {
+    if (!selectedScenarioId || !confirm('Delete this saved scenario?')) return;
+    cancelPendingCalculation();
+    try {
+        await retirementRequest(`/api/retirement/scenarios/${selectedScenarioId}`, 'DELETE');
+        selectedScenarioId = null;
+        await refreshScenarios();
+        await loadSelectedScenario();
+    } catch (err) { setStatus(err.message, 'text-danger'); }
 }
 
 // ── Init ────────────────────────────────────────────
@@ -669,6 +776,8 @@ async function loadRetirement() {
     }
 
     planData = data;
+    baselineData = data;
+    selectedScenarioId = null;
     appEl.innerHTML = '';
     appEl.appendChild(document.getElementById('retirement-template').content.cloneNode(true));
 
@@ -678,7 +787,10 @@ async function loadRetirement() {
     renderChart(data);          // sets chartUsesLogScale, read by renderResults
     renderResults(data);
 
-    // Collapsed fields save too, on change rather than per keystroke.
+    await refreshScenarios();
+    renderScenarioComparison();
+
+    // Collapsed fields preview too, on change rather than per keystroke.
     for (const key of SETTING_KEYS) {
         const el = document.getElementById(key);
         if (el && el.type !== 'range' && el.id !== 'use_historical_returns') {

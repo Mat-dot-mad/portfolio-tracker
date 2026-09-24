@@ -23,6 +23,12 @@ async function loadImportPage() {
     app.innerHTML = '';
     app.appendChild(document.getElementById('import-template').content.cloneNode(true));
     initQuarterlyEntry();
+    for (const [kind, ui] of Object.entries(IMPORT_UI)) {
+        document.getElementById(ui.input).addEventListener('change', () => {
+            delete pendingImports[kind];
+            document.getElementById(ui.result).replaceChildren();
+        });
+    }
 }
 
 // ── Quarter selector ────────────────────────────────
@@ -183,45 +189,106 @@ async function deleteSelectedSnapshot() {
 
 // ── CSV import ──────────────────────────────────────
 
-async function importCsv() {
-    const fileInput = document.getElementById('csvFileInput');
-    const resultDiv = document.getElementById('importResult');
-    const btn = document.getElementById('importBtn');
+// Keep the actual reviewed File object; selecting another file invalidates it.
+const pendingImports = {};
+const IMPORT_UI = {
+    csv: {input: 'csvFileInput', result: 'importResult', button: 'importBtn', url: '/api/import-csv'},
+    cashflows: {input: 'cashflowsFileInput', result: 'cashflowsResult', button: 'cashflowsBtn', url: '/api/import-cashflows'},
+};
 
-    if (!fileInput.files.length) {
-        resultDiv.innerHTML = '<div class="alert alert-warning py-2">Please select a CSV file first.</div>';
-        return;
-    }
+function importCsv() { return previewImport('csv'); }
+function importCashflows() { return previewImport('cashflows'); }
 
-    btn.disabled = true;
-    btn.textContent = 'Importing...';
-    resultDiv.innerHTML = '';
+function appendImportText(parent, text, className = '') {
+    const p = document.createElement('p');
+    p.className = className;
+    p.textContent = text;
+    parent.appendChild(p);
+}
 
-    const formData = new FormData();
-    formData.append('file', fileInput.files[0]);
-
+async function previewImport(kind) {
+    const ui = IMPORT_UI[kind];
+    const input = document.getElementById(ui.input);
+    const result = document.getElementById(ui.result);
+    const button = document.getElementById(ui.button);
+    const file = input.files[0];
+    delete pendingImports[kind];
+    result.replaceChildren();
+    if (!file) { appendImportText(result, 'Select a file first.', 'text-warning'); return; }
+    button.disabled = true;
+    button.textContent = 'Checking…';
     try {
-        const resp = await fetch('/api/import-csv', { method: 'POST', body: formData });
-        const data = await resp.json();
-
-        if (resp.ok) {
-            // The date is still shown here: it is parsed from the filename, so
-            // this is the one place it is worth confirming rather than assuming.
-            resultDiv.innerHTML = `<div class="alert alert-success py-2">
-                Imported <strong>${data.quarter}</strong> (dated ${data.snapshot_date})
-                — ${data.positions_count} positions, total: ${formatPLN(data.total_value)}.
-                Now fill in step 2 for this quarter.
-            </div>`;
-            fileInput.value = '';
-            await refreshQuarters(data.quarter);
-        } else {
-            resultDiv.innerHTML = `<div class="alert alert-danger py-2">${data.error}</div>`;
+        const body = new FormData();
+        body.append('file', file);
+        body.append('preview', '1');
+        const response = await fetch(ui.url, {method: 'POST', body});
+        const data = await response.json();
+        if (input.files[0] !== file) return;
+        if (!response.ok) {
+            appendImportText(result, data.error, 'text-danger');
+            [...(data.errors || []), ...(data.warnings || [])].forEach(t => appendImportText(result, t, 'small'));
+            return;
         }
+        pendingImports[kind] = {file, token: data.preview_token, replacing: data.replacing};
+        appendImportText(result, `Review: ${data.filename}`, 'fw-semibold');
+        if (kind === 'csv') {
+            appendImportText(result, `${data.quarter} · ${data.snapshot_date} · ${data.positions_count} positions · ${formatPLN(data.total_value)}`);
+            if (data.comparison_date) appendImportText(result, `Compared with ${data.comparison_date}: ${formatPLN(data.previous_total)} → ${formatPLN(data.total_value)}`);
+            appendImportText(result, `New positions: ${data.new_positions.length}; no longer present: ${data.removed_positions.length}`);
+            if (data.new_positions.length) appendImportText(result, `New: ${data.new_positions.join(', ')}`, 'small');
+            if (data.removed_positions.length) appendImportText(result, `Removed: ${data.removed_positions.join(', ')}`, 'small');
+            if (data.replacing) appendImportText(result, 'This replaces positions for this date. Saved cash, PPK and mortgage balances are preserved.', 'text-warning');
+        } else {
+            appendImportText(result, `${data.imported} events · ${data.earliest_date} to ${data.latest_date}`);
+            appendImportText(result, `Deposits: ${formatPLN(data.deposited)} · Withdrawals: ${formatPLN(data.withdrawn)} · Net: ${formatPLN(data.net_invested)}`);
+            appendImportText(result, `Saved history: ${data.previous.count} events, net ${formatPLN(data.previous.net_invested)}. Incoming changes: ${data.added_rows} added, ${data.removed_rows} removed.`);
+            appendImportText(result, 'Saving replaces the entire cash-flow history. Check that you exported the full history.', 'text-warning');
+        }
+        data.warnings.forEach(t => appendImportText(result, t, 'small text-warning'));
+        const save = document.createElement('button');
+        save.type = 'button'; save.className = 'btn btn-success btn-sm';
+        save.textContent = kind === 'csv' && data.replacing ? 'Replace snapshot' : 'Save import';
+        save.onclick = () => commitImport(kind, save);
+        result.appendChild(save);
+        const cancel = document.createElement('button');
+        cancel.type = 'button'; cancel.className = 'btn btn-outline-secondary btn-sm ms-2';
+        cancel.textContent = 'Cancel';
+        cancel.onclick = () => { delete pendingImports[kind]; result.replaceChildren(); };
+        result.appendChild(cancel);
+    } catch (err) { appendImportText(result, err.message, 'text-danger'); }
+    finally { button.disabled = false; button.textContent = 'Preview import'; }
+}
+
+async function commitImport(kind, button) {
+    const ui = IMPORT_UI[kind];
+    const pending = pendingImports[kind];
+    if (!pending) return;
+    const result = document.getElementById(ui.result);
+    const input = document.getElementById(ui.input);
+    const previewButton = document.getElementById(ui.button);
+    button.disabled = true;
+    input.disabled = true;
+    previewButton.disabled = true;
+    result.querySelectorAll('button').forEach(b => b.disabled = true);
+    try {
+        const body = new FormData();
+        body.append('file', pending.file);
+        body.append('preview_token', pending.token);
+        if (pending.replacing) body.append('replace', '1');
+        const response = await fetch(ui.url, {method: 'POST', body});
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Import failed');
+        result.replaceChildren();
+        appendImportText(result, 'Import saved.', 'text-success');
+        input.value = '';
+        if (kind === 'csv') await refreshQuarters(data.quarter);
     } catch (err) {
-        resultDiv.innerHTML = `<div class="alert alert-danger py-2">Network error: ${err.message}</div>`;
+        result.replaceChildren();
+        appendImportText(result, `${err.message} Preview again before saving.`, 'text-danger');
     } finally {
-        btn.disabled = false;
-        btn.textContent = 'Import';
+        delete pendingImports[kind];
+        input.disabled = false;
+        previewButton.disabled = false;
     }
 }
 
@@ -237,49 +304,6 @@ async function refreshQuarters(selectQuarter) {
     const match = snapshots.find(s => s.quarter === selectQuarter);
     if (match) select.value = match.id;
     if (select.value) loadManualEntries(select.value);
-}
-
-// ── Cash flow import ────────────────────────────────
-
-async function importCashflows() {
-    const fileInput = document.getElementById('cashflowsFileInput');
-    const resultDiv = document.getElementById('cashflowsResult');
-    const btn = document.getElementById('cashflowsBtn');
-
-    if (!fileInput.files.length) {
-        resultDiv.innerHTML = '<div class="alert alert-warning py-2">Please select an XLSX file first.</div>';
-        return;
-    }
-
-    btn.disabled = true;
-    btn.textContent = 'Importing...';
-    resultDiv.innerHTML = '';
-
-    const formData = new FormData();
-    formData.append('file', fileInput.files[0]);
-
-    try {
-        const resp = await fetch('/api/import-cashflows', { method: 'POST', body: formData });
-        const data = await resp.json();
-
-        if (resp.ok) {
-            resultDiv.innerHTML = `<div class="alert alert-success py-2">
-                Imported <strong>${data.imported}</strong> cash-flow events
-                (${data.earliest_date} → ${data.latest_date}).<br>
-                Deposited: ${formatPLN(data.deposited)} · Withdrawn: ${formatPLN(data.withdrawn)}
-                · <strong>Net invested: ${formatPLN(data.net_invested)}</strong>.
-                ${data.skipped ? `Skipped ${data.skipped} unrecognized rows.` : ''}
-            </div>`;
-            fileInput.value = '';
-        } else {
-            resultDiv.innerHTML = `<div class="alert alert-danger py-2">${data.error}</div>`;
-        }
-    } catch (err) {
-        resultDiv.innerHTML = `<div class="alert alert-danger py-2">Network error: ${err.message}</div>`;
-    } finally {
-        btn.disabled = false;
-        btn.textContent = 'Import';
-    }
 }
 
 // ── Init ────────────────────────────────────────────
