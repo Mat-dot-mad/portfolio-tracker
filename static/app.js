@@ -709,7 +709,7 @@ function setCommentaryMeta(data) {
     if (!data.generated_at) { meta.textContent = ''; return; }
     const when = new Date(data.generated_at).toLocaleString('pl-PL');
     meta.textContent = `Generated ${when} · ${data.model}` +
-        (data.stale ? ' · figures have changed since — regenerate for an up-to-date review' : '');
+        (data.stale ? ' · figures or review model changed — regenerate for an up-to-date review' : '');
     meta.classList.toggle('text-warning', !!data.stale);
 }
 

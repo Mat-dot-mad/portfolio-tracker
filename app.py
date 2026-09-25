@@ -428,8 +428,9 @@ def api_get_commentary():
         "text": cached["text"],
         "generated_at": cached["generated_at"],
         "model": cached["model"],
-        # Underlying figures changed since generation (e.g. after a re-import).
-        "stale": cached["payload_hash"] != payload_hash,
+        # Keep the old review readable, but offer regeneration after a model change.
+        "stale": (cached["payload_hash"] != payload_hash
+                  or cached["model"] != gemini.get_model()),
     })
 
 

@@ -23,7 +23,7 @@ import os
 import requests
 
 API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
-DEFAULT_MODEL = "gemini-2.0-flash"
+DEFAULT_MODEL = "gemini-3.8-flash"
 TIMEOUT_SECONDS = 60
 
 # Generous on purpose. Thinking-capable models (2.5 and later) spend output
@@ -96,6 +96,8 @@ def generate_commentary(payload_json):
     except requests.RequestException as e:
         raise ValueError(f"Could not reach the Gemini API: {e}") from e
 
+    if resp.status_code == 503:
+        raise ValueError("Gemini is temporarily busy. Please try generating the review again shortly.")
     if resp.status_code == 429:
         raise ValueError("Gemini rate limit or free-tier quota reached. Try again later.")
     if resp.status_code in (401, 403):

@@ -2,6 +2,7 @@
 <html lang="en" data-bs-theme="light">
 <head>
     <meta charset="UTF-8">
+    {% include "_icon.html" %}
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Portfolio Tracker</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -81,7 +82,7 @@
 <!-- Header -->
 <nav class="navbar navbar-dark bg-dark mb-4">
     <div class="container">
-        <span class="navbar-brand mb-0 h1">Portfolio Tracker</span>
+        <span class="navbar-brand mb-0 h1 d-flex align-items-center gap-2"><img src="{{ url_for('static', filename='favicon.svg') }}" width="30" height="30" alt="">Portfolio Tracker</span>
         <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
             <a href="/" class="btn btn-sm btn-outline-light">Dashboard</a>
             <a href="/compare" class="btn btn-sm btn-outline-light">Compare</a>
