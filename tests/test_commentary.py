@@ -341,3 +341,22 @@ class TestGeminiClient:
         monkeypatch.setenv("GEMINI_API_KEY", "k")
         monkeypatch.setattr(gemini.requests, "post", lambda *a, **k: FakeResponse())
         assert gemini.generate_commentary("{}") == "Hello world"
+
+
+def test_model_change_marks_review_stale_without_generating(client, two_quarters, monkeypatch):
+    monkeypatch.setenv('GEMINI_API_KEY', 'test-key')
+    monkeypatch.setenv('GEMINI_MODEL', 'gemini-3.6-flash')
+    calls = []
+    def generate(payload):
+        calls.append(payload)
+        return 'Saved review.'
+    monkeypatch.setattr(gemini, 'generate_commentary', generate)
+    assert client.post('/api/commentary').status_code == 200
+    monkeypatch.setenv('GEMINI_MODEL', 'gemini-3.8-flash')
+    cached = client.get('/api/commentary').get_json()
+    assert cached['stale'] is True
+    assert cached['text'] == 'Saved review.'
+    assert cached['model'] == 'gemini-3.6-flash'
+    assert len(calls) == 1
+    assert client.post('/api/commentary').get_json()['model'] == 'gemini-3.8-flash'
+    assert client.get('/api/commentary').get_json()['stale'] is False

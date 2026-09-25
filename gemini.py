@@ -23,7 +23,7 @@ import os
 import requests
 
 API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
-DEFAULT_MODEL = "gemini-2.0-flash"
+DEFAULT_MODEL = "gemini-3.8-flash"
 TIMEOUT_SECONDS = 60
 
 # Generous on purpose. Thinking-capable models (2.5 and later) spend output

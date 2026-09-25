@@ -135,7 +135,7 @@ Runs as a systemd service on the Pi, reachable via Tailscale at `http://<your-pi
 | `DASHBOARD_PASSWORD` | Login password — auth is disabled if unset |
 | `DATABASE_PATH` | SQLite file location |
 | `GEMINI_API_KEY` | Enables the quarterly review — the feature is hidden if unset |
-| `GEMINI_MODEL` | Gemini model id (optional; defaults to a Flash model) |
+| `GEMINI_MODEL` | Gemini model id (optional; defaults to `gemini-3.8-flash`) |
 
 ## Quarterly review (optional)
 
@@ -154,7 +154,8 @@ stronger terms. The restriction is enforced by tests in
 Generation is explicit — it happens when you press the button, never on page
 load. Results are cached per quarter, so a normal visit makes no API call. If
 the underlying figures change afterwards the card says so and offers a
-regenerate.
+regenerate. Changing `GEMINI_MODEL` also marks cached reviews as stale; it
+does not send data or regenerate anything automatically.
 
 The prompt instructs the model to use only the supplied figures, calculate
 nothing, and give no investment advice or predictions.
