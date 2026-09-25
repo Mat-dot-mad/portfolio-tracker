@@ -96,6 +96,8 @@ def generate_commentary(payload_json):
     except requests.RequestException as e:
         raise ValueError(f"Could not reach the Gemini API: {e}") from e
 
+    if resp.status_code == 503:
+        raise ValueError("Gemini is temporarily busy. Please try generating the review again shortly.")
     if resp.status_code == 429:
         raise ValueError("Gemini rate limit or free-tier quota reached. Try again later.")
     if resp.status_code in (401, 403):

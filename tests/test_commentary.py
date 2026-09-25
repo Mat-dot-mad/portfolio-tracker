@@ -250,6 +250,7 @@ class TestGeminiClient:
             gemini.generate_commentary("{}")
 
     @pytest.mark.parametrize("status,fragment", [
+        (503, "temporarily busy"),
         (429, "quota"),
         (401, "API key"),
         (404, "not found"),
