@@ -70,3 +70,58 @@ function toggleTheme() {
     // the Add Data page had no copy of it and showed "Dark" while in dark mode.
     syncThemeButton();
 })();
+
+// The last event date is not proof of export coverage; show both explicitly.
+function renderDataQuality(quality) {
+    const container = document.getElementById('data-quality');
+    if (!container || !quality) return;
+    container.replaceChildren();
+    const rows = quality.snapshots;
+    const flows = quality.cash_flows;
+    const missing = rows.filter(r => Object.values(r.balances).includes('missing'));
+    const needsAttention = missing.length || !flows.covers_snapshot || quality.holdings_behind || quality.future_snapshot || quality.missing_quarters.length;
+    const details = document.createElement('details');
+    details.className = `alert ${needsAttention ? 'alert-warning' : 'alert-success'} mb-4`;
+    const heading = document.createElement('summary');
+    heading.className = 'fw-semibold';
+    heading.textContent = `Data completeness — ${needsAttention ? 'review missing or unconfirmed inputs' : 'recorded inputs are up to date'}`;
+    details.appendChild(heading);
+    function note(text) {
+        const p = document.createElement('p'); p.className = 'small mt-2 mb-1';
+        p.textContent = text; details.appendChild(p);
+    }
+    note(`Holdings as of ${quality.holdings_as_of || 'not imported'}.`);
+    if (quality.holdings_behind) note(`Holdings precede the last completed quarter (${quality.last_completed_quarter_end}).`);
+    if (quality.future_snapshot) note('The latest snapshot is future-dated. Check the imported filename.');
+    note(flows.count ? `Contribution events: ${flows.first_event} to ${flows.last_event}.` : 'No contribution history imported.');
+    note(flows.confirmed_through ? `Full contribution history confirmed through ${flows.confirmed_through}.` : 'Full contribution history has not been confirmed. The last event date does not establish coverage.');
+    if (!flows.covers_snapshot) note('Review the full export and confirm coverage through the latest snapshot in Add Data to enable XIRR.');
+    if (quality.missing_quarters.length) note(`No holdings snapshot for: ${quality.missing_quarters.join(', ')}.`);
+    if (missing.length) note(`${missing.length} snapshot(s) have unrecorded balances. Calculations currently treat these missing amounts as zero. Enter 0 to confirm no balance; leave blank only when unknown.`);
+    if (rows.length) {
+        const wrapper = document.createElement('div'); wrapper.className = 'table-responsive';
+        const table = document.createElement('table'); table.className = 'table table-sm small mt-2 mb-0';
+        const header = table.insertRow();
+        ['Snapshot', 'Cash', 'PPK', 'Mortgage'].forEach(text => {
+            const cell = document.createElement('th'); cell.textContent = text; header.appendChild(cell);
+        });
+        const labels = {missing: 'Not recorded', confirmed_zero: 'Confirmed zero', recorded: 'Recorded'};
+        rows.forEach(row => {
+            const tr = table.insertRow(); const first = tr.insertCell();
+            const link = document.createElement('a'); link.href = `/import?snapshot=${row.id}#balances`;
+            link.textContent = row.snapshot_date; first.appendChild(link);
+            ['cash', 'ppk', 'mortgage'].forEach(kind => {
+                const cell = tr.insertCell(); cell.textContent = labels[row.balances[kind]];
+                if (row.balances[kind] === 'missing') cell.className = 'fw-semibold';
+            });
+        });
+        wrapper.appendChild(table); details.appendChild(wrapper);
+    }
+    const link = document.createElement('a'); link.href = '/import'; link.textContent = 'Review inputs in Add Data';
+    link.className = 'small d-inline-block mt-2'; details.appendChild(link);
+    const overview = document.createElement('p');
+    overview.className = 'small text-muted mb-2';
+    overview.textContent = `Holdings: ${quality.holdings_as_of || 'not imported'} · Last contribution event: ${flows.last_event || 'none'} · Full history confirmed through: ${flows.confirmed_through || 'not confirmed'}`;
+    container.appendChild(overview);
+    container.appendChild(details);
+}

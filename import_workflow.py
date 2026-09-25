@@ -193,6 +193,7 @@ def handle_upload(kind):
             result["snapshot_id"] = sid
         else:
             conn.execute("DELETE FROM cash_flows")
+            conn.execute("DELETE FROM cash_flow_coverage")
             conn.executemany("INSERT INTO cash_flows (" + ",".join(FLOW_KEYS) + ") VALUES (?,?,?,?,?,?)",
                              [tuple(e.get(k) for k in FLOW_KEYS) for e in records])
     return jsonify(ok=True, **result)

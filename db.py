@@ -1,3 +1,4 @@
+import hashlib
 import json
 import sqlite3
 import os
@@ -61,6 +62,12 @@ def init_db():
                 currency TEXT,
                 original_value REAL,
                 account TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS cash_flow_coverage (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                confirmed_through TEXT NOT NULL,
+                confirmed_at TEXT NOT NULL
             );
 
             CREATE INDEX IF NOT EXISTS idx_cash_flows_date ON cash_flows(event_date);
@@ -255,6 +262,7 @@ def replace_cash_flows(events):
     """
     with get_db() as conn:
         conn.execute("DELETE FROM cash_flows")
+        conn.execute("DELETE FROM cash_flow_coverage")
         conn.executemany(
             """INSERT INTO cash_flows
                (event_date, operation, value_pln, currency, original_value, account)
@@ -416,3 +424,38 @@ def save_retirement_scenario(name, settings, scenario_id=None):
             return conn.execute("INSERT INTO retirement_scenarios (name,settings,updated_at) VALUES (?,?,?)", values).lastrowid
         updated = conn.execute("UPDATE retirement_scenarios SET name=?,settings=?,updated_at=? WHERE id=?", values + (scenario_id,))
         return scenario_id if updated.rowcount else None
+
+
+def _cash_flow_records(conn):
+    return [dict(r) for r in conn.execute(
+        "SELECT event_date,operation,value_pln,currency,original_value,account FROM cash_flows ORDER BY event_date,id")]
+
+
+def _cash_flow_revision(events):
+    return hashlib.sha256(json.dumps(events, sort_keys=True).encode()).hexdigest()
+
+
+def get_quality_inputs():
+    with get_db() as conn:
+        # Snapshot all three tables together, including the coverage assertion.
+        conn.execute("BEGIN")
+        events = _cash_flow_records(conn)
+        coverage = conn.execute("SELECT confirmed_through FROM cash_flow_coverage WHERE id=1").fetchone()
+        manual = [dict(r) for r in conn.execute("SELECT snapshot_id,type,amount_pln FROM manual_entries")]
+    return manual, events, dict(confirmed_through=coverage[0] if coverage else None,
+                               revision=_cash_flow_revision(events))
+
+
+def confirm_cash_flow_coverage(through, expected_revision):
+    with get_db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        events = _cash_flow_records(conn)
+        if expected_revision != _cash_flow_revision(events):
+            raise ValueError("Contribution history changed. Reload and review it before confirming.")
+        if not events:
+            raise ValueError("Import your full contribution history first.")
+        if through < events[0]['event_date']:
+            raise ValueError("Coverage cannot end before the first recorded event.")
+        conn.execute("INSERT INTO cash_flow_coverage (id,confirmed_through,confirmed_at) VALUES (1,?,?) "
+                     "ON CONFLICT(id) DO UPDATE SET confirmed_through=excluded.confirmed_through,confirmed_at=excluded.confirmed_at",
+                     (through, datetime.now().isoformat()))

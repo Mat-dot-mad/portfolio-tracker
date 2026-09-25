@@ -385,6 +385,7 @@ async function loadForecast() {
     app.innerHTML = '';
     app.appendChild(tpl.content.cloneNode(true));
 
+    renderDataQuality(data.data_quality);
     historicalStats = computeHistoricalStats(timeline);
     if (!historicalStats.nw.returns.length) {
         app.innerHTML = '<div class="alert alert-info">Forecast needs a positive tracked investment balance in an earlier snapshot.</div>';

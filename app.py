@@ -5,6 +5,7 @@ import math
 import os
 import random
 import re
+from datetime import date
 
 from flask import Flask, render_template, request, redirect, url_for, jsonify, session
 
@@ -14,6 +15,7 @@ import nbp
 import import_data
 import retirement
 import performance
+import data_quality
 import import_workflow
 
 app = Flask(__name__)
@@ -221,7 +223,20 @@ def _build_dashboard_data():
         "latest_date": latest["snapshot_date"] if latest else cf_summary["latest_date"],
     }
 
+    manual, events, coverage = db.get_quality_inputs()
+    quality = data_quality.summarize(snapshots, manual, events, coverage)
+    if not latest or not events:
+        xirr = {"rate": None, "reason": "Import holdings and the full contribution history to calculate XIRR."}
+    elif quality["snapshots"][0]["balances"]["cash"] == "missing":
+        xirr = {"rate": None, "reason": "Record the latest cash balance in Add Data; enter 0 if there is none."}
+    elif not quality["cash_flows"]["covers_snapshot"]:
+        xirr = {"rate": None, "reason": "Confirm full contribution history through the snapshot date in Add Data."}
+    else:
+        xirr = performance.portfolio_xirr(events, latest["snapshot_date"], current_wealth)
+    lifetime["xirr"] = xirr
+
     return {
+        "data_quality": quality,
         "latest": latest,
         "portfolio_total": portfolio_total,
         "cash_total": cash_total,
@@ -564,9 +579,46 @@ def api_save_manual_entries(snapshot_id):
         return jsonify({"error": "Snapshot not found"}), 404
 
     data = request.get_json()
-    entries = data.get("entries", [])
+    if not isinstance(data, dict) or not isinstance(data.get("entries"), list):
+        return jsonify(error="Provide a list of manual entries."), 400
+    entries = data["entries"]
+    try:
+        for entry in entries:
+            if not isinstance(entry, dict) or entry.get("type") not in data_quality.MANUAL_TYPES:
+                raise ValueError("Unknown balance type.")
+            for key in ("amount_pln", "original_amount"):
+                raw = entry.get(key, entry.get("amount_pln"))
+                if raw is None or isinstance(raw, bool):
+                    raise ValueError("Enter a valid amount, or leave the balance unrecorded.")
+                amount = float(raw)
+                if not math.isfinite(amount) or (entry["type"] != "cash" and amount < 0):
+                    raise ValueError("Balances must be finite; PPK and mortgage cannot be negative.")
+                entry[key] = amount
+    except (ValueError, TypeError) as exc:
+        return jsonify(error=str(exc)), 400
     db.save_manual_entries(snapshot_id, entries)
     return jsonify({"ok": True})
+
+
+@app.route("/api/data-quality")
+def api_data_quality():
+    manual, events, coverage = db.get_quality_inputs()
+    return jsonify(data_quality.summarize(db.get_snapshots(), manual, events, coverage))
+
+
+@app.route("/api/cashflow-coverage", methods=["POST"])
+def api_confirm_cashflow_coverage():
+    payload = request.get_json()
+    if not isinstance(payload, dict) or payload.get("confirmed") is not True:
+        return jsonify(error="Confirm that the full history has been reviewed."), 400
+    try:
+        through = date.fromisoformat(payload.get("through", ""))
+        if through > date.today():
+            raise ValueError("Cannot confirm coverage for a future date.")
+        db.confirm_cash_flow_coverage(through.isoformat(), payload.get("revision"))
+    except (ValueError, TypeError) as exc:
+        return jsonify(error=str(exc)), 400
+    return jsonify(ok=True)
 
 
 @app.route("/api/nbp-rate/<currency>/<date>")
@@ -814,7 +866,8 @@ def _retirement_params(settings, data):
         "start_ikze_basis": balances["ikze"] * basis_ratio,
         # Prefer the quarterly-tracked PPK balance over the stored setting, so
         # it stays current with each import instead of needing a manual edit.
-        "start_ppk": balances["ppk"] or num("start_ppk"),
+        "start_ppk": (balances["ppk"] if any(e["type"] == "ppk" for e in data["manual_entries"])
+                      else num("start_ppk")),
     })
     return params, balances, basis_ratio
 
@@ -870,6 +923,7 @@ def _retirement_result(settings):
     return jsonify({
         "available": True,
         "snapshot_date": data["latest"]["snapshot_date"],
+        "data_quality": data["data_quality"],
         # Report the values actually simulated. annual_savings can be derived
         # from cash-flow history rather than taken from the static default, and
         # the form must show what was used or the two silently disagree.
@@ -882,7 +936,7 @@ def _retirement_result(settings):
         "return_source": return_source,
         # Non-null when a PPK balance is tracked in Quarterly Entry; the UI
         # shows the field as read-only in that case so the two can't drift.
-        "ppk_from_snapshot": balances["ppk"] or None,
+        "ppk_from_snapshot": (balances["ppk"] if any(e["type"] == "ppk" for e in data["manual_entries"]) else None),
         "contribution_rate_4q": _contribution_rates(data)[0],
         "contribution_rate_8q": _contribution_rates(data)[1],
         # Geometric, not arithmetic. The headline figures are medians, and a

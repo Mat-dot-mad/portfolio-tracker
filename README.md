@@ -10,7 +10,8 @@ Tailscale, backed up daily to Google Drive.
   then cash/PPK/mortgage, then the contributions XLSX
 - **Reviewed CSV imports** from myFund quarterly exports: validate rows, preview totals and holding changes, then save or atomically replace a snapshot while preserving manual balances.
 - **Cash-flow import** from the myfund.pl "Wkład i wartość" XLSX export: preview date coverage, totals and added/removed events before replacing the full history.
-- **Dashboard**: summary cards, timeline chart, Money In vs Value chart with lifetime returns, breakdown table, treemaps by tag and account
+- **Dashboard**: summary cards, timeline chart, Money In vs Value with dated cash-flow XIRR, breakdown table, treemaps by tag and account
+- **Data completeness**: snapshot and contribution dates, missing quarterly snapshots, unrecorded versus confirmed-zero manual balances, and explicit contribution-history coverage
 - **Compare view**: diff any two quarters side-by-side, with change-by-tag and net-worth-bridge charts
 - **Forecast**: Monte Carlo net-worth projection with what-if sliders (horizon, market return, contribution rate)
 - **Quarterly review**: optional LLM-written summary of the newest quarter (see below)
@@ -27,7 +28,8 @@ Tailscale, backed up daily to Google Drive.
 | `db.py` | SQLite schema + helpers (DB path from `DATABASE_PATH` env var) |
 | `nbp.py` | NBP currency-rate fetcher |
 | `gemini.py` | Gemini API client for the quarterly review (optional feature) |
-| `performance.py` | Shared historical investment return calculation |
+| `performance.py` | Shared historical investment returns and dated cash-flow XIRR |
+| `data_quality.py` | Snapshot gaps, balance completeness and coverage indicators |
 | `import_workflow.py` | Strict upload validation, signed previews and atomic saves |
 | `retirement.py` | Retirement simulation engine (age gating, wrapper taxes, ZUS, PPK) |
 | `import_data.py` | myFund CSV parser |
@@ -74,6 +76,45 @@ The scenario table is created automatically by `create_app()` on startup. This i
 an additive schema update; no manual migration or additional dependencies are
 needed. Existing retirement settings become the baseline unchanged. Deploy via
 the normal pull-and-restart procedure below.
+
+## Data completeness and personal returns
+
+Blank manual balances mean **not recorded**; enter `0` to confirm there is no
+cash, PPK or mortgage balance. Existing absent entries remain unknown after this
+update: previous versions discarded entered zeros, so the migration cannot
+reliably recover that intent. Existing nonzero balances remain recorded. A saved
+zero PPK balance also overrides any older fallback balance in the retirement planner.
+
+The dashboard, Forecast, Retirement and Add Data pages show holdings dates,
+contribution event dates and a collapsible history of missing balances and
+quarterly gaps. Totals still use recorded inputs, with missing amounts treated as
+zero and marked as incomplete. Older missing balances do not block lifetime XIRR
+when the final cash balance and full contribution history are known.
+
+The last cash-flow event does **not** prove the export covers later quiet periods.
+After reviewing the full XLSX history, use **Add Data → Confirm contribution
+coverage** to explicitly confirm all deposits and withdrawals from the beginning
+through a chosen date. Every successful XLSX replacement clears that confirmation;
+failed imports and holdings replacements preserve it. Confirmation is tied to the
+reviewed cash-flow revision to avoid approving an export changed in another tab.
+
+The Money In vs Value card replaces its old simple annualization with **XIRR**, a
+personal money-weighted annual return based on actual dates and a 365-day year
+([Microsoft's XIRR definition](https://support.microsoft.com/en-us/Excel/functions/xirr-function)).
+Deposits are negative, withdrawals positive, and investments plus cash at the
+latest snapshot form the final positive value. Same-day flows are netted and
+post-snapshot events are excluded. PPK and mortgage debt are excluded throughout.
+This differs from the approximate quarterly investment returns used by forecasts.
+
+XIRR requires a recorded final cash balance (including explicit zero) and full
+history confirmed through the snapshot date. Otherwise the card explains the
+missing input. The solver searches annual rates above -100% (to within 1e-12)
+through 100,000,000%, partitions the NPV curve at derivative roots, and withholds a
+single return if it finds multiple solutions, no solution, or cannot resolve a
+complex pattern safely. XIRR is annualized even for periods shorter than a year.
+
+The new `cash_flow_coverage` table is created automatically on startup. Existing
+holdings, balances, cash flows, scenarios and reviews are not rewritten.
 
 ## Local development
 

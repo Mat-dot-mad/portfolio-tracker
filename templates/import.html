@@ -39,6 +39,7 @@
 
 <template id="import-template">
 <div>
+    <div id="data-quality"></div>
     <h4 class="mb-1">Add quarter data</h4>
     <p class="text-muted small mb-4">
         The three steps below are in the order they need to happen: the CSV creates
@@ -68,13 +69,14 @@
     </div>
 
     <!-- Step 2 — cash, PPK, mortgage -->
-    <div class="card mb-4">
+    <div class="card mb-4" id="balances">
         <div class="card-body">
             <h5 class="card-title"><span class="step-number">2</span>Cash, PPK and mortgage</h5>
             <p class="card-note">
                 Balances that are not in the broker export. Pick the quarter, fill in
                 what changed, and save. Foreign-currency cash is converted at the NBP
-                rate for that quarter's date.
+                rate for that quarter's date. Enter <strong>0</strong> to confirm no balance;
+                leave a field blank only when it is not yet recorded.
             </p>
 
             <div class="d-flex align-items-end gap-2 mb-3 flex-wrap" style="max-width: 560px;">
@@ -110,7 +112,7 @@
                 </div>
             </div>
 
-            <button type="button" class="btn btn-primary" onclick="saveManualEntries()">Save</button>
+            <button type="button" class="btn btn-primary" onclick="saveManualEntries()" id="manualSave">Save</button>
             <span id="saveStatus" class="ms-2 text-muted small"></span>
         </div>
     </div>
@@ -134,6 +136,19 @@
                 <button type="button" class="btn btn-primary" onclick="importCashflows()" id="cashflowsBtn">Preview import</button>
             </div>
             <div id="cashflowsResult" class="mt-3"></div>
+            <div class="border-top mt-3 pt-3">
+                <h6>Confirm contribution coverage</h6>
+                <p class="small text-muted">After reviewing the full history, confirm the date it covers, including
+                    periods with no deposits or withdrawals. A new XLSX import clears this confirmation.</p>
+                <label for="coverage-through" class="form-label small">Full history through</label>
+                <input type="date" id="coverage-through" class="form-control form-control-sm mb-2" style="max-width: 200px;">
+                <div class="form-check mb-2">
+                    <input type="checkbox" class="form-check-input" id="coverage-confirmed">
+                    <label class="form-check-label small" for="coverage-confirmed">I have included all deposits and withdrawals from the beginning through this date.</label>
+                </div>
+                <button type="button" class="btn btn-outline-primary btn-sm" id="coverage-save" onclick="confirmCoverage()">Confirm coverage</button>
+                <span class="small ms-2" id="coverage-status"></span>
+            </div>
         </div>
     </div>
 
