@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import os
 from datetime import datetime
@@ -80,6 +81,13 @@ def init_db():
             -- ~25 parameters (personal, PPK, Polish tax rules, assumptions)
             -- and they change independently; columns would mean a migration
             -- every time one is added.
+            CREATE TABLE IF NOT EXISTS retirement_scenarios (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                settings TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS retirement_settings (
                 key   TEXT PRIMARY KEY,
                 value TEXT NOT NULL
@@ -392,3 +400,19 @@ def get_manual_entry_totals_by_type(entry_type):
             (entry_type,),
         ).fetchall()
     return {r["snapshot_id"]: r["total"] for r in rows}
+
+
+def get_retirement_scenarios():
+    with get_db() as conn:
+        rows = conn.execute("SELECT * FROM retirement_scenarios ORDER BY id").fetchall()
+    return [dict(id=r["id"], name=r["name"], settings=json.loads(r["settings"]),
+                 updated_at=r["updated_at"]) for r in rows]
+
+
+def save_retirement_scenario(name, settings, scenario_id=None):
+    with get_db() as conn:
+        values = (name, json.dumps(settings), datetime.now().isoformat())
+        if scenario_id is None:
+            return conn.execute("INSERT INTO retirement_scenarios (name,settings,updated_at) VALUES (?,?,?)", values).lastrowid
+        updated = conn.execute("UPDATE retirement_scenarios SET name=?,settings=?,updated_at=? WHERE id=?", values + (scenario_id,))
+        return scenario_id if updated.rowcount else None

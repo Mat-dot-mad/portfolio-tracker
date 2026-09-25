@@ -27,31 +27,15 @@ let forecastChart = null;       // Chart.js instance, destroyed before re-render
 // ── Computation Engine ──────────────────────────────
 
 function computeHistoricalStats(timeline) {
-    // We model NET WORTH directly (not portfolio + cash + mortgage separately).
-    // For each quarter from snapshot 2 onwards, we split ΔNW into:
-    //   - Contributions: known from the imported myfund.pl XLSX (net deposits to wealth system)
-    //   - Market gains: ΔNW − contributions (residual that came from market performance)
-    //
-    // The market-return rate = market_gains / NW_prev. This is what we sample
-    // from for Monte Carlo paths. Mortgage paydown is NW-neutral (cash − X,
-    // mortgage − X, NW unchanged), so it doesn't enter the math.
-    //
-    // The first snapshot's net_contributions field includes lumped pre-snapshot
-    // history, so per-quarter return computation starts from the SECOND snapshot.
-    const nwMarketReturns = [];
+    // Historical returns are calculated by the server for all views. They
+    // exclude PPK (untracked contributions) and mortgage liabilities.
+    const nwMarketReturns = timeline.slice(1)
+        .map(t => t.market_return).filter(r => r != null);
     const rawNwReturns = [];
     for (let i = 1; i < timeline.length; i++) {
-        const prev = timeline[i - 1];
-        const curr = timeline[i];
-        const prevNW = prev.portfolio_total + prev.cash_total - prev.mortgage_total;
-        const currNW = curr.portfolio_total + curr.cash_total - curr.mortgage_total;
-        if (prevNW <= 0) continue;
-
-        const dNW = currNW - prevNW;
-        rawNwReturns.push(dNW / prevNW);
-
-        const netContrib = curr.net_contributions || 0;
-        nwMarketReturns.push((dNW - netContrib) / prevNW);
+        if (timeline[i - 1].net_worth > 0) {
+            rawNwReturns.push(timeline[i].net_worth / timeline[i - 1].net_worth - 1);
+        }
     }
 
     // Default contribution slider: average of the LAST 4 quarters of net_contributions.
@@ -168,7 +152,7 @@ function setSlidersToHistorical() {
     const h = historicalStats;
     document.getElementById('horizon-slider').value = 8;
 
-    // Return slider: NW market return (true historical, contributions backed out).
+    // Return slider: Shared investment return (contributions backed out).
     // Clamp to slider range so the visible default isn't pinned to a bound.
     const returnSlider = document.getElementById('return-slider');
     const rMin = parseFloat(returnSlider.min), rMax = parseFloat(returnSlider.max);
@@ -186,7 +170,7 @@ function showHistoricalDefaultsHints() {
     const h = historicalStats;
     const marketPct = formatPct(h.nw.historicalAnnual * 100);
     const rawPct = formatPct(h.nw.rawAnnual * 100);
-    const sourceLabel = h.nw.hasCashFlowData ? 'true market' : 'estimated market';
+    const sourceLabel = h.nw.hasCashFlowData ? 'approx. investment return' : 'estimate: contributions missing';
     document.getElementById('return-default').textContent =
         `(${sourceLabel}: ${marketPct} · raw incl. contributions: ${rawPct})`;
     document.getElementById('contribution-default').textContent =
@@ -360,17 +344,10 @@ function renderForecastChart(summary, assumptions) {
                             if (idx >= histLen || idx === 0) return [];
 
                             const tl = timeline[idx];
-                            const prevTl = timeline[idx - 1];
                             const netContrib = tl.net_contributions || 0;
-                            const dNW = (tl.portfolio_total + tl.cash_total - tl.mortgage_total) -
-                                        (prevTl.portfolio_total + prevTl.cash_total - prevTl.mortgage_total);
-                            const marketGain = dNW - netContrib;
-
                             const fmt = (v) => `${v >= 0 ? '+' : ''}${formatPLN(v)}`;
                             const lines = [`Net contributions: ${fmt(netContrib)}`];
-                            if (Math.abs(marketGain) >= 1) {
-                                lines.push(`Market gain (implied): ${fmt(marketGain)}`);
-                            }
+                            if (tl.market_gain != null) lines.push(`Investment gain (excluding PPK): ${fmt(tl.market_gain)}`);
                             return lines;
                         },
                     },
@@ -409,6 +386,10 @@ async function loadForecast() {
     app.appendChild(tpl.content.cloneNode(true));
 
     historicalStats = computeHistoricalStats(timeline);
+    if (!historicalStats.nw.returns.length) {
+        app.innerHTML = '<div class="alert alert-info">Forecast needs a positive tracked investment balance in an earlier snapshot.</div>';
+        return;
+    }
     showHistoricalDefaultsHints();
     setSlidersToHistorical();
 

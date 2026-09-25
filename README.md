@@ -8,13 +8,13 @@ Tailscale, backed up daily to Google Drive.
 
 - **Add Data tab** (`/import`) — the three steps for a new quarter in order: positions CSV,
   then cash/PPK/mortgage, then the contributions XLSX
-- **CSV import** from myFund quarterly exports (auto-detects the snapshot date from the filename)
-- **Cash-flow import** from the myfund.pl "Wkład i wartość" XLSX export (contributions & withdrawals; idempotent re-import)
+- **Reviewed CSV imports** from myFund quarterly exports: validate rows, preview totals and holding changes, then save or atomically replace a snapshot while preserving manual balances.
+- **Cash-flow import** from the myfund.pl "Wkład i wartość" XLSX export: preview date coverage, totals and added/removed events before replacing the full history.
 - **Dashboard**: summary cards, timeline chart, Money In vs Value chart with lifetime returns, breakdown table, treemaps by tag and account
 - **Compare view**: diff any two quarters side-by-side, with change-by-tag and net-worth-bridge charts
 - **Forecast**: Monte Carlo net-worth projection with what-if sliders (horizon, market return, contribution rate)
 - **Quarterly review**: optional LLM-written summary of the newest quarter (see below)
-- **Retirement planner**: models Polish tax wrappers (IKE/IKZE/PPK), ZUS and the pre-60 bridge to project the earliest feasible retirement age
+- **Retirement planner**: models Polish tax wrappers (IKE/IKZE/PPK), ZUS and the pre-60 bridge. Temporary edits do not overwrite the baseline; save named scenarios, compare them with the baseline, or explicitly update the baseline.
 - **PPK tracking**: entered per quarter alongside cash and mortgage; counts inside the portfolio total and appears as its own tag/account
 - **NBP currency rates** for non-PLN positions
 - **Password-gated** when `DASHBOARD_PASSWORD` is set (disabled in dev mode)
@@ -27,17 +27,53 @@ Tailscale, backed up daily to Google Drive.
 | `db.py` | SQLite schema + helpers (DB path from `DATABASE_PATH` env var) |
 | `nbp.py` | NBP currency-rate fetcher |
 | `gemini.py` | Gemini API client for the quarterly review (optional feature) |
+| `performance.py` | Shared historical investment return calculation |
+| `import_workflow.py` | Strict upload validation, signed previews and atomic saves |
 | `retirement.py` | Retirement simulation engine (age gating, wrapper taxes, ZUS, PPK) |
 | `import_data.py` | myFund CSV parser |
 | `static/common.js` | Helpers shared by all pages (`formatPLN`, account badges, theme) |
 | `static/app.js`, `static/compare.js`, `static/forecast.js` | Dashboard, Compare, and Forecast frontends |
 | `static/retirement.js` | Retirement planner frontend |
-| `static/import.js` | Add Data page — the only frontend that writes data |
+| `static/import.js` | Add Data page — imports and manual balances |
 | `templates/` | Jinja templates (`index`, `compare`, `forecast`, `login`) |
 | `tests/` | pytest suite (parsers, cash-flow aggregation, API, auth) |
 | `requirements.txt` | Runtime deps, pinned: flask, requests, gunicorn, openpyxl |
 | `requirements-dev.txt` | Runtime deps + pytest (local only, never installed on the Pi) |
 | `migrate_fix_xtb_ticker.py` | One-off DB migration |
+
+## Accounting and scenario behavior
+
+Historical period returns are computed once on the server from investments plus
+cash, excluding PPK and mortgage debt. Net contributions are subtracted from the
+change in that tracked capital; contributions are approximated as arriving at
+period end. These are approximate period returns, not XIRR. The forecast,
+retirement planner and quarterly commentary share these inputs. Money In vs Value
+uses the same tracked capital; the net-worth chart still includes PPK and debt.
+No additional PPK contribution data is required. With no cash-flow import,
+contributions are unknown and historical return estimates are incomplete.
+
+The forecast applies those historical investment returns to net worth as a
+simplified projection. It does not add future PPK payroll contributions separately;
+the retirement planner models those from its salary settings.
+
+Retirement edits only calculate a temporary draft. **Save scenario** saves the
+selected named scenario (or creates one when Baseline is selected); **Save as new**
+creates a separate scenario. **Update baseline** explicitly saves the current
+inputs as the baseline. **Discard changes** reloads the selected saved plan.
+Scenarios retain complete assumptions but recalculate from the latest portfolio
+balances, showing the snapshot date used. Simulation paths use independent seeded
+random streams so early failures do not change subsequent paths between scenarios.
+Resetting the baseline preserves named scenarios.
+
+Import previews expire after one hour. Saving revalidates both the file and the
+reviewed stored positions/cash flows; changes require a new preview. Invalid dates,
+unreadable or non-finite amounts block the import. Ignored rows appear in the
+preview. Snapshot replacement keeps the snapshot ID and manual balances.
+
+The scenario table is created automatically by `create_app()` on startup. This is
+an additive schema update; no manual migration or additional dependencies are
+needed. Existing retirement settings become the baseline unchanged. Deploy via
+the normal pull-and-restart procedure below.
 
 ## Local development
 
@@ -66,6 +102,7 @@ Then run the suite:
 
 ```bash
 venv/bin/python -m pytest
+node --test tests/js/*.test.cjs  # browser calculation regressions (local Node.js)
 ```
 
 Every test runs against a temporary SQLite file — `portfolio.db` is never

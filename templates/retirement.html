@@ -80,6 +80,27 @@
         <strong>today's money</strong>.
     </p>
 
+    <div class="card mb-4"><div class="card-body">
+        <h5>Baseline and scenarios</h5>
+        <p class="small text-muted">Explore freely: changing inputs recalculates this draft without saving your baseline.
+            Saved scenarios use the latest portfolio balances whenever you load them.</p>
+        <div class="d-flex gap-2 flex-wrap align-items-end mb-2">
+            <div><label class="form-label small" for="scenario-select">Saved plan</label>
+                <select class="form-select form-select-sm" id="scenario-select" onchange="loadSelectedScenario()">
+                    <option value="">Baseline</option>
+                </select></div>
+            <div><label class="form-label small" for="scenario-name">Scenario name</label>
+                <input class="form-control form-control-sm" id="scenario-name" maxlength="100" placeholder="e.g. Retire at 55"></div>
+            <button type="button" class="btn btn-primary btn-sm" onclick="saveScenario()">Save scenario</button>
+            <button type="button" class="btn btn-outline-primary btn-sm" onclick="saveScenario(true)">Save as new</button>
+            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="updateBaseline()">Update baseline</button>
+            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="discardScenario()">Discard changes</button>
+            <button type="button" class="btn btn-outline-danger btn-sm" id="delete-scenario" onclick="deleteScenario()" disabled>Delete scenario</button>
+        </div>
+        <div id="scenario-note" class="small text-muted"></div>
+        <div id="scenario-comparison" class="table-responsive mt-3"></div>
+    </div></div>
+
     <!-- Headline results -->
     <div class="row g-3 mb-4" id="results-row">
         <div class="col-md-4">
@@ -230,11 +251,10 @@
 
                 <div class="d-flex align-items-center gap-3 pt-3 border-top flex-wrap">
                     <button class="btn btn-outline-danger btn-sm" id="reset-btn"
-                            onclick="resetSettings()">Reset everything to defaults</button>
+                            onclick="resetSettings()">Reset baseline to defaults</button>
                     <span class="setting-note mb-0" style="max-width: 34rem;">
-                        Sliders save as you move them, so exploring a scenario overwrites your
-                        real figures. This clears every saved value — the saving rate returns to
-                        the one derived from your cash-flow history.
+                        This clears the saved baseline. The saving rate returns to the one
+                        derived from cash-flow history. Named scenarios are preserved.
                     </span>
                 </div>
             </div>

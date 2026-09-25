@@ -184,7 +184,7 @@ function renderMoneyInChart() {
 
     const labels = timeline.map(t => t.quarter);
     const investedSeries = timeline.map(t => t.cumulative_invested);
-    const wealthSeries = timeline.map(t => t.portfolio_total + t.cash_total - t.mortgage_total);
+    const wealthSeries = timeline.map(t => t.tracked_wealth);
 
     moneyInChartInstance = new Chart(canvas, {
         type: 'line',
@@ -202,7 +202,7 @@ function renderMoneyInChart() {
                     fill: true,
                 },
                 {
-                    label: 'Net worth (portfolio + cash − mortgage)',
+                    label: 'Tracked investments + cash (excluding PPK)',
                     data: wealthSeries,
                     borderColor: '#198754',
                     backgroundColor: 'rgba(25, 135, 84, 0.15)',
