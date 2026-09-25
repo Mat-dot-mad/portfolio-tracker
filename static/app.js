@@ -45,6 +45,7 @@ async function loadDashboard() {
     app.innerHTML = '';
     app.appendChild(template.content.cloneNode(true));
 
+    renderDataQuality(dashboardData.data_quality);
     renderSummaryCards();
     renderTimelineChart();
     renderMoneyInChart();
@@ -58,6 +59,10 @@ async function loadDashboard() {
 
 function renderSummaryCards() {
     const d = dashboardData;
+    const balances = d.data_quality.snapshots[0].balances;
+    const hasMissing = Object.values(balances).includes('missing');
+    const previousBalances = d.data_quality.snapshots[1]?.balances;
+    const comparableNetWorth = previousBalances && !hasMissing && !Object.values(previousBalances).includes('missing');
     const quarter = d.latest ? d.latest.quarter : '—';
     const container = document.getElementById('summary-cards');
     const tl = d.timeline;
@@ -75,45 +80,40 @@ function renderSummaryCards() {
 
     let cards = [
         {
-            label: `Portfolio (${quarter})`,
+            label: `Portfolio (${balances.ppk === "missing" ? "recorded inputs" : quarter})`,
             value: formatPLN(d.portfolio_total),
-            change: tl.length >= 2 ? formatPctChange(d.portfolio_total, prevPortfolio) : '',
+            change: balances.ppk !== 'missing' && previousBalances?.ppk !== 'missing' && tl.length >= 2 ? formatPctChange(d.portfolio_total, prevPortfolio) : '',
             color: '',
         },
         {
             label: `Cash (${quarter})`,
-            value: formatPLN(d.cash_total),
-            change: tl.length >= 2 ? formatPctChange(d.cash_total, prevCash) : '',
+            value: balances.cash === 'missing' ? 'Not recorded' : formatPLN(d.cash_total),
+            change: balances.cash !== 'missing' && tl.length >= 2 ? formatPctChange(d.cash_total, prevCash) : '',
             color: '',
         },
         {
             label: `PPK (${quarter})`,
-            value: formatPLN(d.ppk_total || 0),
-            change: tl.length >= 2 ? formatPctChange(d.ppk_total || 0, prevPpk) : '',
+            value: balances.ppk === 'missing' ? 'Not recorded' : formatPLN(d.ppk_total || 0),
+            change: balances.ppk !== 'missing' && tl.length >= 2 ? formatPctChange(d.ppk_total || 0, prevPpk) : '',
             color: '',
             hideWhenZero: true,
         },
         {
             label: `Mortgage (${quarter})`,
-            value: formatPLN(d.mortgage_total),
-            change: tl.length >= 2 ? formatPctChange(d.mortgage_total, prevMortgage) : '',
+            value: balances.mortgage === 'missing' ? 'Not recorded' : formatPLN(d.mortgage_total),
+            change: balances.mortgage !== 'missing' && tl.length >= 2 ? formatPctChange(d.mortgage_total, prevMortgage) : '',
             color: 'text-negative',
         },
         {
-            label: `Net Worth (${quarter})`,
+            label: `Net Worth (${hasMissing ? "recorded inputs" : quarter})`,
             value: formatPLN(d.net_worth),
-            change: tl.length >= 2 ? formatPctChange(d.net_worth, prevNet) : '',
+            change: comparableNetWorth && tl.length >= 2 ? formatPctChange(d.net_worth, prevNet) : '',
             color: d.net_worth >= 0 ? 'text-positive' : 'text-negative',
         },
     ];
 
-    // A PPK card is only meaningful once a balance has been entered; showing a
-    // permanent 0 zl card to users without PPK would be noise.
-    cards = cards.filter(c => !(c.hideWhenZero && !d.ppk_total));
-
-    // The 12-column grid can't split into 5, so use row-cols-* instead and set
-    // the large-screen count from however many cards there actually are — 4
-    // without a PPK balance, 5 with one.
+    // Keep all balance cards visible so unknown and confirmed zero remain
+    // distinct. row-cols-* supports the five-column layout.
     container.className =
         `row g-3 mb-4 row-cols-2 row-cols-md-3 row-cols-lg-${cards.length}`;
 
@@ -133,8 +133,8 @@ function renderSummaryCards() {
 // ── Money In vs Value Chart ─────────────────────────
 // Two lines on a shared time axis:
 //   1. Cumulative net invested — staircase showing how much you've put in
-//   2. Total wealth (portfolio + cash − mortgage) — actual value
-// The vertical gap is your real market gains.
+//   2. Tracked investments plus cash, excluding PPK and debt.
+// The gap is gains on recorded capital, assuming complete contributions.
 
 let moneyInChartInstance = null;
 
@@ -151,33 +151,23 @@ function renderMoneyInChart() {
     }
     card.classList.remove('d-none');
 
-    // Headline stats line above the chart: market gains + total return %.
-    // Annualized rate uses simple compound growth (current_wealth / net_invested)^(1/years).
-    // It assumes all contributions arrived at the start of the period, so it
-    // UNDERSTATES the true IRR when contributions grow over time — labelled
-    // "simple" to make that clear.
-    const totalReturnPct = lt.net_invested > 0
-        ? (lt.market_gains / lt.net_invested) * 100
-        : 0;
-    const gainsCls = lt.market_gains >= 0 ? 'text-positive' : 'text-negative';
-    const sign = lt.market_gains >= 0 ? '+' : '';
-    let annualizedFrag = '';
-    if (lt.earliest_date && lt.latest_date && lt.net_invested > 0 && lt.current_wealth > 0) {
-        const start = new Date(lt.earliest_date);
-        const end = new Date(lt.latest_date);
-        const years = (end - start) / (365.25 * 24 * 3600 * 1000);
-        if (years >= 0.5) {
-            const annual = Math.pow(lt.current_wealth / lt.net_invested, 1 / years) - 1;
-            annualizedFrag = ` / <strong>~${(annual * 100).toFixed(1)}%</strong> annualized`;
-        }
-    }
     const statsEl = document.getElementById('moneyin-stats');
     if (statsEl) {
-        statsEl.innerHTML =
-            `Total market gains: <strong class="${gainsCls}">${sign}${formatPLN(lt.market_gains)}</strong> ` +
-            `(<strong class="${gainsCls}">${totalReturnPct >= 0 ? '+' : ''}${totalReturnPct.toFixed(1)}%</strong>` +
-            `${annualizedFrag}, simple) ` +
-            `<span class="text-muted small">since ${lt.earliest_date}</span>`;
+        statsEl.replaceChildren();
+        const gains = document.createElement('div');
+        gains.textContent = `Gains on recorded capital: ${formatPLN(lt.market_gains)} · Net contributed: ${formatPLN(lt.net_invested)}`;
+        statsEl.appendChild(gains);
+        const rate = document.createElement('strong');
+        const xirr = lt.xirr;
+        rate.textContent = xirr && xirr.rate != null
+            ? `Personal annualized return (XIRR): ${(xirr.rate * 100).toFixed(2)}%`
+            : 'Personal annualized return (XIRR): unavailable';
+        statsEl.appendChild(rate);
+        const note = document.createElement('div'); note.className = 'small text-muted mt-1';
+        note.textContent = xirr && xirr.rate != null
+            ? `Uses actual deposit and withdrawal dates through ${lt.latest_date}, plus investments and cash at that date. PPK and mortgage debt are excluded. This is your money-weighted return, not the quarterly investment return used for forecasting.`
+            : xirr?.reason || 'Import your full contribution history to calculate XIRR.';
+        statsEl.appendChild(note);
     }
 
     if (moneyInChartInstance) moneyInChartInstance.destroy();

@@ -10,6 +10,8 @@
 // needs, so this page uses /api/snapshots instead.
 
 let snapshots = [];
+let qualityData = null;
+let manualLoadSeq = 0;
 
 async function loadImportPage() {
     const app = document.getElementById('app');
@@ -23,6 +25,7 @@ async function loadImportPage() {
     app.innerHTML = '';
     app.appendChild(document.getElementById('import-template').content.cloneNode(true));
     initQuarterlyEntry();
+    await loadQuality();
     for (const [kind, ui] of Object.entries(IMPORT_UI)) {
         document.getElementById(ui.input).addEventListener('change', () => {
             delete pendingImports[kind];
@@ -49,7 +52,9 @@ function initQuarterlyEntry() {
         `<option value="${s.id}">${s.quarter}</option>`
     ).join('');
 
-    loadManualEntries(snapshots[0].id);
+    const requested = new URLSearchParams(location.search).get('snapshot');
+    if (snapshots.some(s => String(s.id) === requested)) select.value = requested;
+    loadManualEntries(select.value);
     select.addEventListener('change', () => loadManualEntries(select.value));
 }
 
@@ -91,13 +96,25 @@ async function updateCashRowPreview(row) {
 // ── Manual entries ──────────────────────────────────
 
 async function loadManualEntries(snapshotId) {
-    const resp = await fetch(`/api/manual-entries/${snapshotId}`);
-    const entries = await resp.json();
+    const seq = ++manualLoadSeq;
+    const saveButton = document.getElementById('manualSave');
+    saveButton.disabled = true;
+    let entries;
+    try {
+        const resp = await fetch(`/api/manual-entries/${snapshotId}`);
+        if (!resp.ok) throw new Error('Could not load balances. Select the quarter again to retry.');
+        entries = await resp.json();
+    } catch (err) {
+        if (seq === manualLoadSeq) document.getElementById('saveStatus').textContent = err.message;
+        return;
+    }
+    if (seq !== manualLoadSeq) return;
+    saveButton.disabled = false;
     const container = document.getElementById('cashEntries');
     container.innerHTML = '';
     const cashEntries = entries.filter(e => e.type === 'cash');
     if (cashEntries.length === 0) { addCashRow(); }
-    else { cashEntries.forEach(e => addCashRow(e.currency || 'PLN', e.original_amount || e.amount_pln, e.label)); }
+    else { cashEntries.forEach(e => addCashRow(e.currency || 'PLN', e.original_amount ?? e.amount_pln, e.label)); }
     const mortgage = entries.find(e => e.type === 'mortgage');
     document.getElementById('mortgageAmount').value = mortgage ? mortgage.amount_pln : '';
 
@@ -123,16 +140,18 @@ function addCashRow(currency, amount, label) {
             </select>
         </div>
         <div class="col" style="max-width: 160px;">
-            <input type="number" step="0.01" class="form-control cash-amount" placeholder="Amount" value="${amount || ''}">
+            <input type="number" step="0.01" class="form-control cash-amount" placeholder="Amount" value="">
         </div>
         <div class="col">
-            <input type="text" class="form-control cash-label" placeholder="Label (e.g. Savings)" value="${label || ''}">
+            <input type="text" class="form-control cash-label" placeholder="Label (e.g. Savings)" value="">
         </div>
         <div class="col-auto">
             <button type="button" class="btn btn-outline-danger btn-sm" onclick="this.closest('.row').remove()" style="line-height: 1.7;">&times;</button>
         </div>
         <div class="col-12"><small class="cash-pln-preview text-muted"></small></div>
     `;
+    row.querySelector('.cash-amount').value = amount ?? '';
+    row.querySelector('.cash-label').value = label || '';
     container.appendChild(row);
     row.querySelector('.cash-currency').addEventListener('change', () => updateCashRowPreview(row));
     row.querySelector('.cash-amount').addEventListener('input', () => updateCashRowPreview(row));
@@ -140,40 +159,88 @@ function addCashRow(currency, amount, label) {
 }
 
 async function saveManualEntries() {
-    const snapshotId = document.getElementById('entryQuarter').value;
+    const select = document.getElementById('entryQuarter');
+    const snapshotId = select.value;
     if (!snapshotId) return;
     const date = getSelectedSnapshotDate();
-    const entries = [];
-
-    for (const row of document.querySelectorAll('#cashEntries .row')) {
-        const currency = row.querySelector('.cash-currency').value;
-        const originalAmount = parseFloat(row.querySelector('.cash-amount').value);
-        const label = row.querySelector('.cash-label').value.trim();
-        if (!originalAmount) continue;
-        let amountPln = originalAmount;
-        if (currency !== 'PLN' && date) {
-            try { const { rate } = await fetchRate(currency, date); amountPln = originalAmount * rate; }
-            catch { alert(`Could not fetch ${currency} rate. Save aborted.`); return; }
-        }
-        entries.push({ type: 'cash', label: label || `Cash ${currency}`, currency, original_amount: originalAmount, amount_pln: Math.round(amountPln * 100) / 100 });
-    }
-
-    const ppkAmount = parseFloat(document.getElementById('ppkAmount').value);
-    const ppkLabel = document.getElementById('ppkLabel').value;
-    if (ppkAmount) {
-        entries.push({ type: 'ppk', label: ppkLabel || 'PPK', currency: 'PLN', original_amount: ppkAmount, amount_pln: ppkAmount });
-    }
-
-    const mortgageAmount = parseFloat(document.getElementById('mortgageAmount').value);
-    const mortgageLabel = document.getElementById('mortgageLabel').value.trim();
-    if (mortgageAmount) {
-        entries.push({ type: 'mortgage', label: mortgageLabel || 'Mortgage', currency: 'PLN', original_amount: mortgageAmount, amount_pln: mortgageAmount });
-    }
-
-    const resp = await fetch(`/api/manual-entries/${snapshotId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ entries }) });
     const status = document.getElementById('saveStatus');
-    if (resp.ok) { status.textContent = 'Saved.'; status.className = 'ms-2 small text-success'; }
-    else { status.textContent = 'Error saving.'; status.className = 'ms-2 small text-danger'; }
+    const button = document.getElementById('manualSave');
+    button.disabled = true; select.disabled = true;
+    status.textContent = 'Saving…';
+    try {
+        const entries = [];
+        for (const row of document.querySelectorAll('#cashEntries .row')) {
+            const input = row.querySelector('.cash-amount');
+            if (!input.validity.valid) throw new Error('Enter a valid cash amount.');
+            if (input.value.trim() === '') continue;
+            const originalAmount = Number(input.value);
+            if (!Number.isFinite(originalAmount)) throw new Error('Enter a finite cash amount.');
+            const currency = row.querySelector('.cash-currency').value;
+            const label = row.querySelector('.cash-label').value.trim();
+            let amountPln = originalAmount;
+            if (currency !== 'PLN' && date && originalAmount !== 0) {
+                const {rate} = await fetchRate(currency, date);
+                amountPln *= rate;
+            }
+            entries.push({type:'cash', label:label || `Cash ${currency}`, currency,
+                original_amount:originalAmount, amount_pln:Math.round(amountPln * 100) / 100});
+        }
+        for (const type of ['ppk', 'mortgage']) {
+            const input = document.getElementById(`${type}Amount`);
+            if (!input.validity.valid) throw new Error(`Enter a valid ${type} amount.`);
+            if (input.value.trim() === '') continue;
+            const amount = Number(input.value);
+            if (!Number.isFinite(amount) || amount < 0) throw new Error(`${type} must be zero or a positive amount.`);
+            entries.push({type, label:document.getElementById(`${type}Label`).value,
+                currency:'PLN', original_amount:amount, amount_pln:amount});
+        }
+        const resp = await fetch(`/api/manual-entries/${snapshotId}`, {
+            method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({entries}),
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || 'Could not save balances.');
+        status.textContent = 'Saved. Blank balances remain unrecorded; zeros are confirmed.';
+        status.className = 'ms-2 small text-success';
+        await loadQuality();
+    } catch (err) {
+        status.textContent = err.message; status.className = 'ms-2 small text-danger';
+    } finally { button.disabled = false; select.disabled = false; }
+}
+
+async function loadQuality() {
+    try {
+        const response = await fetch('/api/data-quality');
+        if (!response.ok) throw new Error('Could not load data completeness. Reload before confirming coverage.');
+        qualityData = await response.json();
+        renderDataQuality(qualityData);
+        const input = document.getElementById('coverage-through');
+        if (!input.value) input.value = qualityData.cash_flows.confirmed_through || qualityData.holdings_as_of || '';
+        const now = new Date();
+        input.max = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+    } catch (err) {
+        qualityData = null;
+        document.getElementById('coverage-status').textContent = err.message;
+    }
+}
+
+async function confirmCoverage() {
+    const status = document.getElementById('coverage-status');
+    const button = document.getElementById('coverage-save');
+    button.disabled = true;
+    try {
+        if (!qualityData) throw new Error('Reload the page to review contribution history.');
+        const response = await fetch('/api/cashflow-coverage', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({through:document.getElementById('coverage-through').value,
+                confirmed:document.getElementById('coverage-confirmed').checked,
+                revision:qualityData.cash_flows.revision}),
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'Could not confirm coverage.');
+        await loadQuality();
+        status.textContent = 'Coverage confirmed.';
+    } catch (err) { status.textContent = err.message; }
+    finally { button.disabled = false; }
 }
 
 async function deleteSelectedSnapshot() {
@@ -282,6 +349,11 @@ async function commitImport(kind, button) {
         appendImportText(result, 'Import saved.', 'text-success');
         input.value = '';
         if (kind === 'csv') await refreshQuarters(data.quarter);
+        if (kind === 'cashflows') {
+            document.getElementById('coverage-confirmed').checked = false;
+            document.getElementById('coverage-status').textContent = 'New history imported. Review and confirm coverage again.';
+        }
+        await loadQuality();
     } catch (err) {
         result.replaceChildren();
         appendImportText(result, `${err.message} Preview again before saving.`, 'text-danger');

@@ -569,7 +569,7 @@ function fillForm(settings, data) {
     // field becomes read-only so the two cannot drift apart.
     const ppkEl = document.getElementById('start_ppk');
     const note = document.getElementById('start_ppk_note');
-    if (ppkEl && data && data.ppk_from_snapshot) {
+    if (ppkEl && data && data.ppk_from_snapshot != null) {
         ppkEl.value = Math.round(data.ppk_from_snapshot);
         ppkEl.readOnly = true;
         ppkEl.classList.add('bg-body-secondary');
@@ -784,6 +784,7 @@ async function loadRetirement() {
     buildLevers();
     fillForm(data.settings, data);
     refreshLeverLabels();
+    renderDataQuality(data.data_quality);
     renderChart(data);          // sets chartUsesLogScale, read by renderResults
     renderResults(data);
 
