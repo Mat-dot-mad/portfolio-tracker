@@ -282,3 +282,28 @@ sudo systemctl restart portfolio
 UFW allows traffic only on the `tailscale0` interface plus SSH. The dashboard is
 reachable from any device logged into the same tailnet at
 `http://<your-pi-hostname>:5001`. The port is **not** exposed to the public internet.
+
+### Import history and undo
+
+The Add Data page records each successful CSV/XLSX upload with its filename,
+UTC timestamp, totals, changes and validation warnings. History starts when this
+feature is deployed; earlier uploads cannot be reconstructed. The first new
+upload still saves the existing data as its undo destination. Original uploaded
+files are not retained; their SHA-256 hashes and parsed before/after data are
+stored in SQLite and included in normal database backups.
+
+Choose **Preview undo**, review the current and restored totals, then
+**Confirm undo**. Undo applies to one snapshot's positions or the full
+contribution history. Later imports for that same dataset must be undone first.
+Position replacement preserves manual balances. Undoing the creation of a new
+quarter removes that quarter and its generated review, but is blocked if manual
+balances have since been saved (including confirmed zeros); replace its CSV to
+correct positions instead. Cash-flow undo restores the previous coverage
+confirmation as well as the previous events.
+
+The preview expires after one hour and is checked again under a database write
+lock. Changed data requires a new preview or prevents undo. Imports, journal
+records, restores and undo timestamps commit atomically. Undone records remain
+visible; this is an audit trail, not a redo feature. A new `import_history` table
+and index are created automatically on startup; no existing financial data is
+migrated or changed.

@@ -13,6 +13,7 @@ from itsdangerous import BadSignature, URLSafeTimedSerializer
 
 import db
 import import_data
+import import_history
 
 HEADER = ("Data", "Operacja", "Wartość", "Waluta", "Kurs", "Wartość [PLN]", "Konto")
 POSITION_KEYS = ("name", "ticker", "isin", "account", "group_name", "currency", "tags", "value_pln")
@@ -182,6 +183,7 @@ def handle_upload(kind):
                 return jsonify(error="Preview expired or invalid. Preview the file again."), 409
             if reviewed != dict(file=file_hash, state=state):
                 return jsonify(error="The file or saved data changed. Preview the file again."), 409
+        before_import = import_history.capture(conn, kind, snapshot_date)
         if kind == "csv":
             if existing:
                 sid = existing["id"]
@@ -196,4 +198,6 @@ def handle_upload(kind):
             conn.execute("DELETE FROM cash_flow_coverage")
             conn.executemany("INSERT INTO cash_flows (" + ",".join(FLOW_KEYS) + ") VALUES (?,?,?,?,?,?)",
                              [tuple(e.get(k) for k in FLOW_KEYS) for e in records])
+        result['import_id'] = import_history.record(conn, kind, snapshot_date, upload.filename,
+                                                    raw, before_import, result)
     return jsonify(ok=True, **result)
