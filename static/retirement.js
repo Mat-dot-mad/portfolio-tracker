@@ -845,7 +845,6 @@ async function loadRetirement() {
     buildLevers();
     fillForm(data.settings, data);
     refreshLeverLabels();
-    renderDataQuality(data.data_quality);
     renderChart(data);          // sets chartUsesLogScale, read by renderResults
     renderResults(data);
 
