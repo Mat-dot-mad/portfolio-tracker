@@ -17,6 +17,7 @@ import retirement
 import performance
 import data_quality
 import import_workflow
+import import_history
 
 app = Flask(__name__)
 # SECRET_KEY signs the session cookie so the browser cannot forge "authenticated".
@@ -650,6 +651,16 @@ def api_import_csv():
 @app.route("/api/import-cashflows", methods=["POST"])
 def api_import_cashflows():
     return import_workflow.handle_upload("cashflows")
+
+
+@app.route("/api/import-history")
+def api_import_history():
+    return import_history.list_history()
+
+
+@app.route("/api/import-history/<int:import_id>/undo", methods=["POST"])
+def api_undo_import(import_id):
+    return import_history.undo(import_id)
 
 
 # --- Retirement planner ---------------------------------------------------

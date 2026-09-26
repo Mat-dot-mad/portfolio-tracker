@@ -26,6 +26,7 @@ async function loadImportPage() {
     app.appendChild(document.getElementById('import-template').content.cloneNode(true));
     initQuarterlyEntry();
     await loadQuality();
+    await loadImportHistory();
     for (const [kind, ui] of Object.entries(IMPORT_UI)) {
         document.getElementById(ui.input).addEventListener('change', () => {
             delete pendingImports[kind];
@@ -202,6 +203,7 @@ async function saveManualEntries() {
         status.textContent = 'Saved. Blank balances remain unrecorded; zeros are confirmed.';
         status.className = 'ms-2 small text-success';
         await loadQuality();
+        await loadImportHistory();
     } catch (err) {
         status.textContent = err.message; status.className = 'ms-2 small text-danger';
     } finally { button.disabled = false; select.disabled = false; }
@@ -354,6 +356,7 @@ async function commitImport(kind, button) {
             document.getElementById('coverage-status').textContent = 'New history imported. Review and confirm coverage again.';
         }
         await loadQuality();
+        await loadImportHistory();
     } catch (err) {
         result.replaceChildren();
         appendImportText(result, `${err.message} Preview again before saving.`, 'text-danger');
@@ -369,13 +372,138 @@ async function commitImport(kind, button) {
 async function refreshQuarters(selectQuarter) {
     snapshots = await (await fetch('/api/snapshots')).json();
     const select = document.getElementById('entryQuarter');
-    select.disabled = false;
+    select.disabled = !snapshots.length;
+    if (!snapshots.length) {
+        select.innerHTML = '<option value="">No quarters yet — import a CSV first</option>';
+        document.getElementById('manualSave').disabled = true;
+        ++manualLoadSeq;
+        document.getElementById('cashEntries').replaceChildren();
+        document.getElementById('ppkAmount').value = '';
+        document.getElementById('mortgageAmount').value = '';
+        return;
+    }
     select.innerHTML = snapshots.map(s =>
         `<option value="${s.id}">${s.quarter}</option>`
     ).join('');
     const match = snapshots.find(s => s.quarter === selectQuarter);
     if (match) select.value = match.id;
     if (select.value) loadManualEntries(select.value);
+}
+
+// ── Import journal and guarded undo ──────────────────
+
+let historyLoading = false;
+
+function historyButton(parent, label, action, className = 'btn-outline-secondary') {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `btn btn-sm ${className} me-2`;
+    button.textContent = label;
+    button.onclick = () => action(button);
+    parent.appendChild(button);
+    return button;
+}
+
+function historySummary(kind, state) {
+    if (kind === 'csv') return `${state.count} positions · ${formatPLN(state.total)}`;
+    return `${state.count} events · ${state.first || 'no dates'} to ${state.last || 'no dates'} · deposits ${formatPLN(state.deposits)} · withdrawals ${formatPLN(state.withdrawals)} · coverage ${state.confirmed_through || 'unconfirmed'}`;
+}
+
+async function loadImportHistory(before = null) {
+    const container = document.getElementById('import-history');
+    if (!container || historyLoading) return;
+    historyLoading = true;
+    if (!before) container.replaceChildren();
+    try {
+        const response = await fetch('/api/import-history' + (before ? `?before=${before}` : ''));
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Could not load history.');
+        if (!before && !data.items.length) appendImportText(container, 'No imports recorded yet.', 'text-muted');
+        for (const item of data.items) {
+            const row = document.createElement('div');
+            row.className = 'border-top py-3';
+            container.appendChild(row);
+            appendImportText(row, `${item.filename} — ${item.kind === 'csv' ? 'Positions: ' + item.snapshot_date : 'Contribution history'}`, 'fw-semibold mb-1 text-break');
+            appendImportText(row, `Saved ${new Date(item.imported_at).toLocaleString()}` + (item.undone_at ? ` · Undone ${new Date(item.undone_at).toLocaleString()}` : ''), 'small text-muted');
+            const summary = item.summary;
+            if (item.kind === 'csv') {
+                appendImportText(row, `${summary.replacing ? 'Replaced' : 'Created'} snapshot · ${summary.positions_count} positions · ${formatPLN(summary.total_value)}`, 'small');
+                if (summary.comparison_date) appendImportText(row, `Compared with ${summary.comparison_date}: ${formatPLN(summary.previous_total)} → ${formatPLN(summary.total_value)}`, 'small');
+            } else {
+                appendImportText(row, `${summary.previous.count} → ${summary.count} events · net invested ${formatPLN(summary.previous.net_invested)} → ${formatPLN(summary.net_invested)} · ${summary.added_rows} added, ${summary.removed_rows} removed`, 'small');
+            }
+            const details = document.createElement('details');
+            const heading = document.createElement('summary');
+            heading.textContent = 'Import details';
+            details.appendChild(heading);
+            row.appendChild(details);
+            if (item.kind === 'csv') {
+                appendImportText(details, `New positions: ${summary.new_positions.join(', ') || 'none'}`, 'small');
+                appendImportText(details, `Removed positions: ${summary.removed_positions.join(', ') || 'none'}`, 'small');
+            } else {
+                appendImportText(details, `Imported dates: ${summary.earliest_date} to ${summary.latest_date}. Deposits ${formatPLN(summary.deposited)}; withdrawals ${formatPLN(summary.withdrawn)}.`, 'small');
+            }
+            (summary.warnings || []).forEach(w => appendImportText(details, w, 'small text-warning'));
+            if (item.undo_reason) appendImportText(row, item.undo_reason, 'small text-muted mb-0');
+            else {
+                const preview = document.createElement('div');
+                historyButton(row, 'Preview undo', button => previewUndo(item.id, preview, button));
+                row.appendChild(preview);
+            }
+        }
+        if (data.next_before) historyButton(container, 'Load older imports', async button => {
+            button.remove(); await loadImportHistory(data.next_before);
+        });
+    } catch (err) {
+        appendImportText(container, err.message, 'text-danger');
+        historyButton(container, 'Retry history', () => loadImportHistory());
+    } finally { historyLoading = false; }
+}
+
+async function previewUndo(id, container, button) {
+    button.disabled = true;
+    container.replaceChildren();
+    try {
+        const response = await fetch(`/api/import-history/${id}/undo`, {
+            method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({preview: true}),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Could not preview undo.');
+        appendImportText(container, 'Undo preview', 'fw-semibold mt-3');
+        appendImportText(container, `Current: ${historySummary(data.kind, data.current)}`, 'small');
+        appendImportText(container, `Restore: ${historySummary(data.kind, data.restored)}`, 'small');
+        appendImportText(container, data.kind === 'csv'
+            ? (data.restored.snapshot_exists ? 'Saved cash, PPK and mortgage balances will be preserved.' : 'This removes the quarter created by this import and any generated review. It has no saved manual balances.')
+            : 'This restores the previous contribution history and its previous coverage confirmation.', 'small text-warning');
+        historyButton(container, 'Confirm undo', confirm => commitUndo(id, data.preview_token, container, confirm), 'btn-danger');
+        historyButton(container, 'Cancel', () => container.replaceChildren());
+    } catch (err) { appendImportText(container, err.message, 'text-danger'); }
+    finally { button.disabled = false; }
+}
+
+async function commitUndo(id, token, container, button) {
+    button.disabled = true;
+    container.querySelectorAll('button').forEach(b => b.disabled = true);
+    try {
+        const response = await fetch(`/api/import-history/${id}/undo`, {
+            method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({preview_token: token}),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Undo failed.');
+        for (const [kind, ui] of Object.entries(IMPORT_UI)) {
+            delete pendingImports[kind];
+            document.getElementById(ui.result).replaceChildren();
+        }
+        await refreshQuarters();
+        document.getElementById('coverage-through').value = '';
+        document.getElementById('coverage-confirmed').checked = false;
+        document.getElementById('coverage-status').textContent = '';
+        await loadQuality();
+        await loadImportHistory();
+    } catch (err) {
+        container.replaceChildren();
+        appendImportText(container, `${err.message} Preview again before undoing.`, 'text-danger');
+    }
 }
 
 // ── Init ────────────────────────────────────────────

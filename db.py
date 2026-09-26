@@ -84,10 +84,23 @@ def init_db():
                 text         TEXT NOT NULL
             );
 
-            -- Retirement planner inputs. Key/value because the planner has
-            -- ~25 parameters (personal, PPK, Polish tax rules, assumptions)
-            -- and they change independently; columns would mean a migration
-            -- every time one is added.
+            -- Immutable before/after data for successful imports; undone_at
+            -- records restores without deleting the audit trail.
+            CREATE TABLE IF NOT EXISTS import_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind TEXT NOT NULL CHECK (kind IN ('csv','cashflows')),
+                snapshot_date TEXT,
+                filename TEXT NOT NULL,
+                file_hash TEXT NOT NULL,
+                imported_at TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                before_data TEXT NOT NULL,
+                after_data TEXT NOT NULL,
+                undone_at TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_import_history_scope
+                ON import_history(kind,snapshot_date,id);
+
             CREATE TABLE IF NOT EXISTS retirement_scenarios (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
