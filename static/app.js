@@ -45,7 +45,6 @@ async function loadDashboard() {
     app.innerHTML = '';
     app.appendChild(template.content.cloneNode(true));
 
-    renderDataQuality(dashboardData.data_quality);
     renderSummaryCards();
     renderTimelineChart();
     renderMoneyInChart();
