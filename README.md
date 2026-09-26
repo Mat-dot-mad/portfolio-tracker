@@ -329,3 +329,17 @@ The planner uses investment balances, not net worth. Mortgage debt is not
 subtracted and repayment schedules are not simulated. Include expected
 retirement repayments in annual spending; spending remains constant in today's
 money and does not automatically fall at a mortgage payoff date.
+
+### Precise controls, filters and quarterly progress
+
+Retirement and Forecast pair sliders with numeric inputs. Percentage fields use
+percent units (for example, `4.37` means 4.37%); exact amounts are preserved.
+Invalid or blank fields leave the last calculated results visible and prevent
+saving an invalid retirement draft. Forecast reset updates both controls.
+
+Dashboard account filters use checkboxes; selecting several uses OR matching.
+“All accounts / clear filters” removes restrictions. On Add Data, choose a saved
+quarter or “New quarter”. The guide links to the next incomplete step and tracks
+saved positions, all three manual balances (including confirmed zeros), and full
+contribution coverage through the selected date. Unsaved balance edits mark the
+balance step pending. Completion applies to that quarter, not to all history.

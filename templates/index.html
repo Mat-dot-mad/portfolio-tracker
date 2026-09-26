@@ -162,17 +162,12 @@
                 <select id="filterFrom" class="form-select form-select-sm" style="width: auto;"></select>
                 <span class="small">to</span>
                 <select id="filterTo" class="form-select form-select-sm" style="width: auto;"></select>
-                <span class="small ms-3 fw-semibold">Account:</span>
-                <select id="filterAccount" class="form-select form-select-sm" multiple size="6"
-                        style="width: auto; min-width: 15rem;">
-                    <option value="IKE">IKE</option>
-                    <option value="IKE-M">IKE-M</option>
-                    <option value="IKZE">IKZE</option>
-                    <option value="RETIREMENT">All retirement (IKE + IKE-M + IKZE)</option>
-                    <option value="PPK">PPK</option>
-                    <option value="TAXABLE">Taxable (non-retirement)</option>
-                </select>
-                <span class="setting-note text-muted small">ctrl/cmd-click for several; none = all</span>
+                <fieldset id="filterAccount" class="border rounded p-2">
+                    <legend class="float-none w-auto fs-6 px-1 mb-1">Accounts</legend>
+                    <div class="d-flex flex-wrap gap-3"><label class="form-check-label"><input class="form-check-input me-1" type="checkbox" value="IKE">IKE</label><label class="form-check-label"><input class="form-check-input me-1" type="checkbox" value="IKE-M">IKE-M</label><label class="form-check-label"><input class="form-check-input me-1" type="checkbox" value="IKZE">IKZE</label><label class="form-check-label"><input class="form-check-input me-1" type="checkbox" value="RETIREMENT">All IKE / IKZE</label><label class="form-check-label"><input class="form-check-input me-1" type="checkbox" value="PPK">PPK</label><label class="form-check-label"><input class="form-check-input me-1" type="checkbox" value="TAXABLE">Taxable</label></div>
+                    <button type="button" class="btn btn-link btn-sm ps-0" id="all-accounts">All accounts / clear filters</button>
+                    <span id="account-filter-status" class="small text-muted" aria-live="polite">All accounts shown</span>
+                </fieldset>
             </div>
 
             <div class="table-responsive">

@@ -108,10 +108,17 @@ function buildLevers() {
             <div class="col-md-4">
                 <div class="card h-100 lever" id="lever-${l.key}">
                     <div class="card-body">
-                        <div class="lever-label">${l.label}</div>
+                        <label class="lever-label" for="${l.key}-number">${l.label}</label>
                         <div class="lever-value" id="value-${l.key}">—</div>
                         <input type="range" class="form-range mt-1" id="${l.key}"
-                               min="${l.min}" max="${l.max}" step="${l.step}">
+                               min="${l.min}" max="${l.max}" step="${l.step}" aria-label="${l.label} slider">
+                        <div class="input-group input-group-sm mt-2">
+                            <input type="number" class="form-control" id="${l.key}-number" required
+                                min="${l.key.includes('rate') || l.key.includes('return') ? '-99.999' : '0'}"
+                                max="${l.key.includes('age') ? '120' : l.key.includes('rate') || l.key.includes('return') ? '100' : '1000000000000'}"
+                                step="${l.key.includes('age') ? '1' : 'any'}">
+                            <span class="input-group-text">${l.key.includes('age') ? 'years' : l.key.includes('rate') || l.key.includes('return') ? '%' : 'PLN / year'}</span>
+                        </div>
                         <div class="lever-ticks" id="ticks-${l.key}"></div>
                         <div class="lever-note" id="note-${l.key}"></div>
                         ${l.control || ''}
@@ -121,11 +128,15 @@ function buildLevers() {
     }
 
     for (const l of allLevers()) {
-        // `input` fires continuously while dragging: relabel immediately so the
-        // control feels responsive, and debounce the actual recalculation.
-        document.getElementById(l.key).addEventListener('input', () => {
-            refreshLeverLabels();
-            scheduleUpdate();
+        const slider = document.getElementById(l.key);
+        const input = document.getElementById(`${l.key}-number`);
+        bindNumberToRange(slider, input, {
+            scale: l.key.includes('rate') || l.key.includes('return') ? 100 : 1,
+            onValid: () => { refreshLeverLabels(); scheduleUpdate(); },
+            onInvalid: () => {
+                cancelPendingCalculation();
+                setStatus(`${l.label}: enter a valid number. Results show the last calculated draft.`, 'text-danger');
+            },
         });
     }
     const source = document.getElementById('use_historical_returns');
@@ -639,6 +650,8 @@ function fillForm(settings, data) {
                 el.step = Math.abs(steps - Math.round(steps)) < 1e-8 ? lever.step : 'any';
             }
             el.value = settings[key];
+            const number = document.getElementById(`${key}-number`);
+            if (number) syncNumberFromRange(el, number, key.includes('rate') || key.includes('return') ? 100 : 1);
         }
     }
 
@@ -656,7 +669,16 @@ function fillForm(settings, data) {
     }
 }
 
-function readForm() {
+function readForm(validate = false) {
+    if (validate) {
+        for (const l of allLevers()) {
+            const input = document.getElementById(`${l.key}-number`);
+            if (input && (!input.value.trim() || !input.validity.valid)) {
+                input.reportValidity();
+                throw new Error(`${l.label}: enter a valid number before calculating or saving.`);
+            }
+        }
+    }
     const out = {};
     for (const key of SETTING_KEYS) {
         const el = document.getElementById(key);
@@ -690,7 +712,7 @@ async function runUpdate() {
     setStatus('calculating…');
 
     try {
-        const data = await retirementRequest('/api/retirement/preview', 'POST', readForm());
+        const data = await retirementRequest('/api/retirement/preview', 'POST', readForm(true));
         // A newer drag superseded this request — drop the stale result.
         if (seq !== requestSeq) return;
         if (!data.available) throw new Error(data.reason || 'unavailable');
@@ -804,7 +826,7 @@ async function saveScenario(asNew = false) {
     try {
         const result = await retirementRequest('/api/retirement/scenarios' + (id ? `/${id}` : ''), id ? 'PUT' : 'POST', {
             name: document.getElementById('scenario-name').value,
-            settings: readForm(),
+            settings: readForm(true),
         });
         selectedScenarioId = result.id;
         await refreshScenarios();
@@ -817,7 +839,7 @@ async function updateBaseline() {
     if (!confirm('Replace your saved baseline with the current inputs?')) return;
     cancelPendingCalculation();
     try {
-        await retirementRequest('/api/retirement', 'POST', readForm());
+        await retirementRequest('/api/retirement', 'POST', readForm(true));
         await loadRetirement();
         setStatus('Baseline updated', 'text-success');
     } catch (err) { setStatus(err.message, 'text-danger'); }

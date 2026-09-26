@@ -39,7 +39,6 @@
 
 <template id="import-template">
 <div>
-    <div id="data-quality"></div>
     <h4 class="mb-1">Add quarter data</h4>
     <p class="text-muted small mb-4">
         The three steps below are in the order they need to happen: the CSV creates
@@ -47,8 +46,20 @@
         Review each file before saving it.
     </p>
 
+            <div class="d-flex align-items-end gap-2 mb-3 flex-wrap" style="max-width: 560px;">
+                <div class="flex-grow-1">
+                    <label for="entryQuarter" class="form-label fw-semibold">Quarter to update</label>
+                    <select id="entryQuarter" class="form-select"></select>
+                </div>
+                <button type="button" class="btn btn-outline-danger btn-sm"
+                        onclick="deleteSelectedSnapshot()" style="white-space: nowrap;">Delete quarter</button>
+            </div>
+
+    <div id="quarter-progress" class="card mb-4" aria-live="polite"></div>
+    <p class="small text-muted">Choose “New quarter” to start an upload, or select a saved quarter to finish its update. Progress reflects saved data.</p>
+
     <!-- Step 1 — positions CSV -->
-    <div class="card mb-4">
+    <div class="card mb-4" id="positions">
         <div class="card-body">
             <h5 class="card-title"><span class="step-number">1</span>Positions (CSV)</h5>
             <p class="card-note">
@@ -79,18 +90,10 @@
                 leave a field blank only when it is not yet recorded.
             </p>
 
-            <div class="d-flex align-items-end gap-2 mb-3 flex-wrap" style="max-width: 560px;">
-                <div class="flex-grow-1">
-                    <label for="entryQuarter" class="form-label fw-semibold">Quarter</label>
-                    <select id="entryQuarter" class="form-select"></select>
-                </div>
-                <button type="button" class="btn btn-outline-danger btn-sm"
-                        onclick="deleteSelectedSnapshot()" style="white-space: nowrap;">Delete quarter</button>
-            </div>
 
             <h6>Cash positions</h6>
             <div id="cashEntries"></div>
-            <button type="button" class="btn btn-outline-secondary btn-sm mb-3" onclick="addCashRow()">+ Add cash position</button>
+            <button type="button" class="btn btn-outline-secondary btn-sm mb-3" onclick="addCashRow(); markBalancesDirty()">+ Add cash position</button>
 
             <h6>PPK</h6>
             <div class="row g-2 mb-3" style="max-width: 560px;">
@@ -118,7 +121,7 @@
     </div>
 
     <!-- Step 3 — cash flows -->
-    <div class="card mb-4">
+    <div class="card mb-4" id="contributions">
         <div class="card-body">
             <h5 class="card-title"><span class="step-number">3</span>Contributions (XLSX)</h5>
             <p class="card-note">
@@ -151,6 +154,8 @@
             </div>
         </div>
     </div>
+
+    <div id="data-quality"></div>
 
     <section class="card mb-4" aria-labelledby="import-history-title">
         <div class="card-body">
