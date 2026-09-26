@@ -150,20 +150,24 @@ function updateSliderLabels(assumptions) {
 
 function setSlidersToHistorical() {
     const h = historicalStats;
-    document.getElementById('horizon-slider').value = 8;
+    setExactRangeValue(document.getElementById('horizon-slider'), 8);
 
     // Return slider: Shared investment return (contributions backed out).
     // Clamp to slider range so the visible default isn't pinned to a bound.
     const returnSlider = document.getElementById('return-slider');
     const rMin = parseFloat(returnSlider.min), rMax = parseFloat(returnSlider.max);
     const annualPct = h.nw.historicalAnnual * 100;
-    returnSlider.value = Math.max(rMin, Math.min(rMax, annualPct)).toFixed(1);
+    setExactRangeValue(returnSlider, Number(Math.max(rMin, Math.min(rMax, annualPct)).toFixed(1)));
 
     // Contribution slider: recent (last 4q) average net contribution rate.
     const contribSlider = document.getElementById('contribution-slider');
     const cMin = parseFloat(contribSlider.min), cMax = parseFloat(contribSlider.max);
     const contrib = Math.round(h.contribution.recentAvg);
-    contribSlider.value = Math.max(cMin, Math.min(cMax, contrib));
+    setExactRangeValue(contribSlider, Math.max(cMin, Math.min(cMax, contrib)));
+    for (const name of ['horizon', 'return', 'contribution']) {
+        syncNumberFromRange(document.getElementById(`${name}-slider`), document.getElementById(`${name}-number`));
+    }
+    document.getElementById('forecast-input-status').textContent = '';
 }
 
 function showHistoricalDefaultsHints() {
@@ -395,7 +399,18 @@ async function loadForecast() {
 
     // Wire slider events — `input` for live drag updates
     ['horizon-slider', 'return-slider', 'contribution-slider'].forEach(id => {
-        document.getElementById(id).addEventListener('input', render);
+        bindNumberToRange(document.getElementById(id), document.getElementById(id.replace('-slider', '-number')), {
+            onValid: () => {
+                const invalid = ['horizon', 'return', 'contribution'].some(name => {
+                    const input = document.getElementById(`${name}-number`);
+                    return !input.value.trim() || !input.validity.valid;
+                });
+                if (invalid) return;
+                document.getElementById('forecast-input-status').textContent = '';
+                render();
+            },
+            onInvalid: () => { document.getElementById('forecast-input-status').textContent = 'Enter a valid value in each field. The chart shows the last valid assumptions.'; },
+        });
     });
 
     document.getElementById('reset-btn').addEventListener('click', () => {

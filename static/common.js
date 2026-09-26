@@ -125,3 +125,34 @@ function renderDataQuality(quality) {
     container.appendChild(overview);
     container.appendChild(details);
 }
+
+// Preserve exact typed values rather than allowing range inputs to snap them.
+function setExactRangeValue(slider, value) {
+    slider.min = Math.min(Number(slider.min), value);
+    slider.max = Math.max(Number(slider.max), value);
+    slider.dataset.baseStep ||= slider.step;
+    const step = Number(slider.dataset.baseStep);
+    const steps = (value - Number(slider.min)) / step;
+    slider.step = step > 0 && Math.abs(steps - Math.round(steps)) < 1e-8 ? String(step) : 'any';
+    slider.value = value;
+}
+
+function syncNumberFromRange(slider, input, scale = 1) {
+    input.value = scale === 1 ? slider.value : Number((Number(slider.value) * scale).toPrecision(15));
+}
+
+function bindNumberToRange(slider, input, {scale = 1, onValid, onInvalid}) {
+    slider.addEventListener('input', () => {
+        syncNumberFromRange(slider, input, scale);
+        onValid();
+    });
+    input.addEventListener('input', () => {
+        if (!input.value.trim() || !input.validity.valid || !Number.isFinite(Number(input.value))) {
+            onInvalid();
+            return;
+        }
+        setExactRangeValue(slider, Number(input.value) / scale);
+        onValid();
+    });
+    syncNumberFromRange(slider, input, scale);
+}

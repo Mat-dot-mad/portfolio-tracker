@@ -443,11 +443,16 @@ function initBreakdownTable() {
     });
 
     const filterAccount = document.getElementById('filterAccount');
-    filterAccount.addEventListener('change', () => {
-        // Multi-select: collect every chosen option. Empty means no filter.
-        breakdownState.accountFilter =
-            [...filterAccount.selectedOptions].map(o => o.value).filter(Boolean);
+    const updateAccounts = () => {
+        breakdownState.accountFilter = [...filterAccount.querySelectorAll('input:checked')].map(input => input.value);
+        document.getElementById('account-filter-status').textContent = breakdownState.accountFilter.length
+            ? `${breakdownState.accountFilter.length} filters selected` : 'All accounts shown';
         renderBreakdownTable();
+    };
+    filterAccount.addEventListener('change', updateAccounts);
+    document.getElementById('all-accounts').addEventListener('click', () => {
+        filterAccount.querySelectorAll('input').forEach(input => { input.checked = false; });
+        updateAccounts();
     });
 
     renderBreakdownTable();

@@ -12,6 +12,8 @@
 let snapshots = [];
 let qualityData = null;
 let manualLoadSeq = 0;
+let balanceDraftDirty = false;
+let balanceEditRevision = 0;
 
 async function loadImportPage() {
     const app = document.getElementById('app');
@@ -25,6 +27,9 @@ async function loadImportPage() {
     app.innerHTML = '';
     app.appendChild(document.getElementById('import-template').content.cloneNode(true));
     initQuarterlyEntry();
+    const balances = document.getElementById('balances');
+    balances.addEventListener('input', markBalancesDirty);
+    balances.addEventListener('change', markBalancesDirty);
     await loadQuality();
     await loadImportHistory();
     for (const [kind, ui] of Object.entries(IMPORT_UI)) {
@@ -40,23 +45,95 @@ async function loadImportPage() {
 function initQuarterlyEntry() {
     const select = document.getElementById('entryQuarter');
 
-    if (!snapshots.length) {
-        select.innerHTML = '<option value="">No quarters yet — import a CSV first</option>';
-        select.disabled = true;
+    select.innerHTML = '<option value="">New quarter — import positions</option>' + snapshots.map(s =>
+        `<option value="${s.id}">${s.quarter} · ${s.snapshot_date}</option>`
+    ).join('');
+    const requested = new URLSearchParams(location.search).get('snapshot');
+    select.value = snapshots.some(s => String(s.id) === requested) ? requested : (snapshots[0]?.id || '');
+    select.addEventListener('change', selectedQuarterChanged);
+    selectedQuarterChanged();
+}
+
+function selectedQuarterChanged() {
+    const id = document.getElementById('entryQuarter').value;
+    balanceDraftDirty = false;
+    ++balanceEditRevision;
+    if (id) loadManualEntries(id);
+    else {
+        ++manualLoadSeq;
+        document.getElementById('cashEntries').replaceChildren();
+        document.getElementById('ppkAmount').value = '';
+        document.getElementById('mortgageAmount').value = '';
+        document.getElementById('manualSave').disabled = true;
+        document.getElementById('saveStatus').textContent = 'Import a positions CSV to create the quarter first.';
+    }
+    document.getElementById('coverage-through').value =
+        [getSelectedSnapshotDate(), qualityData?.cash_flows.confirmed_through].filter(Boolean).sort().pop() || '';
+    document.getElementById('coverage-confirmed').checked = false;
+    document.getElementById('coverage-status').textContent = '';
+    renderQuarterProgress();
+}
+
+function markBalancesDirty() {
+    balanceDraftDirty = true;
+    ++balanceEditRevision;
+    renderQuarterProgress();
+}
+
+// Pure progress calculation: confirmed zero is complete, missing is not.
+function quarterProgress(quality, id, dirty, today) {
+    const row = quality?.snapshots.find(s => String(s.id) === String(id));
+    const flows = quality?.cash_flows;
+    const hasSnapshot = !!row && row.snapshot_date <= today;
+    return {
+        row,
+        steps: [hasSnapshot,
+            !!row && !dirty && ['cash','ppk','mortgage'].every(k => ['recorded','confirmed_zero'].includes(row.balances[k])),
+            !!row && flows.count > 0 && !!flows.confirmed_through && flows.confirmed_through >= row.snapshot_date],
+    };
+}
+
+function renderQuarterProgress() {
+    const container = document.getElementById('quarter-progress');
+    if (!container) return;
+    container.replaceChildren();
+    const body = document.createElement('div'); body.className = 'card-body'; container.appendChild(body);
+    if (!qualityData) {
+        appendImportText(body, 'Progress unavailable until saved data can be loaded.', 'text-muted mb-0');
         return;
     }
-
-    select.disabled = false;
-    // Quarter labels are YYYY-QQ everywhere in the app; the snapshot date is
-    // implied by the quarter and only added noise here.
-    select.innerHTML = snapshots.map(s =>
-        `<option value="${s.id}">${s.quarter}</option>`
-    ).join('');
-
-    const requested = new URLSearchParams(location.search).get('snapshot');
-    if (snapshots.some(s => String(s.id) === requested)) select.value = requested;
-    loadManualEntries(select.value);
-    select.addEventListener('change', () => loadManualEntries(select.value));
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+    const {row, steps} = quarterProgress(qualityData, document.getElementById('entryQuarter').value, balanceDraftDirty, today);
+    const complete = steps.every(Boolean);
+    appendImportText(body, row ? `Update for ${row.snapshot_date}: ${steps.filter(Boolean).length} of 3 steps complete` : 'New quarter: start with a positions CSV', 'fw-semibold');
+    const list = document.createElement('ol'); list.className = 'list-unstyled d-flex flex-wrap gap-3 mb-2';
+    const labels = ['Positions saved', 'Balances saved', 'Contributions confirmed'];
+    const targets = ['positions', 'balances', 'contributions'];
+    labels.forEach((label, i) => {
+        const item = document.createElement('li');
+        const link = document.createElement('a'); link.href = '#' + targets[i];
+        link.textContent = `${i+1}. ${label} — ${steps[i] ? 'Done' : 'Pending'}`;
+        link.className = steps[i] ? 'text-success' : 'fw-semibold';
+        item.appendChild(link); list.appendChild(item);
+    });
+    body.appendChild(list);
+    if (balanceDraftDirty) appendImportText(body, 'Balance edits are not saved yet.', 'small text-warning');
+    if (row && row.snapshot_date > today) appendImportText(body, 'This snapshot is future-dated. Check the date in the CSV filename.', 'small text-warning');
+    if (row && !steps[1]) {
+        const missing = ['cash','ppk','mortgage'].filter(k => row.balances[k] === 'missing');
+        if (missing.length) appendImportText(body, `Still needed: ${missing.join(', ')}. Enter 0 where there is no balance.`, 'small');
+    }
+    if (complete) {
+        appendImportText(body, 'This quarter’s update is complete. You can return to the dashboard.', 'text-success mb-1');
+        const link = document.createElement('a'); link.href = '/'; link.textContent = 'View dashboard'; body.appendChild(link);
+    } else {
+        const next = steps.findIndex(done => !done);
+        const link = document.createElement('a'); link.href = '#' + targets[next];
+        link.className = 'btn btn-primary btn-sm';
+        link.textContent = ['Next: import positions', 'Next: save balances', 'Next: review contributions'][next];
+        body.appendChild(link);
+    }
 }
 
 function getSelectedSnapshotDate() {
@@ -147,7 +224,7 @@ function addCashRow(currency, amount, label) {
             <input type="text" class="form-control cash-label" placeholder="Label (e.g. Savings)" value="">
         </div>
         <div class="col-auto">
-            <button type="button" class="btn btn-outline-danger btn-sm" onclick="this.closest('.row').remove()" style="line-height: 1.7;">&times;</button>
+            <button type="button" class="btn btn-outline-danger btn-sm" onclick="this.closest('.row').remove(); markBalancesDirty()" style="line-height: 1.7;">&times;</button>
         </div>
         <div class="col-12"><small class="cash-pln-preview text-muted"></small></div>
     `;
@@ -165,6 +242,7 @@ async function saveManualEntries() {
     if (!snapshotId) return;
     const date = getSelectedSnapshotDate();
     const status = document.getElementById('saveStatus');
+    const savingRevision = balanceEditRevision;
     const button = document.getElementById('manualSave');
     button.disabled = true; select.disabled = true;
     status.textContent = 'Saving…';
@@ -200,6 +278,7 @@ async function saveManualEntries() {
         });
         const data = await resp.json();
         if (!resp.ok) throw new Error(data.error || 'Could not save balances.');
+        if (balanceEditRevision === savingRevision) balanceDraftDirty = false;
         status.textContent = 'Saved. Blank balances remain unrecorded; zeros are confirmed.';
         status.className = 'ms-2 small text-success';
         await loadQuality();
@@ -215,12 +294,14 @@ async function loadQuality() {
         if (!response.ok) throw new Error('Could not load data completeness. Reload before confirming coverage.');
         qualityData = await response.json();
         renderDataQuality(qualityData);
+        renderQuarterProgress();
         const input = document.getElementById('coverage-through');
-        if (!input.value) input.value = qualityData.cash_flows.confirmed_through || qualityData.holdings_as_of || '';
+        if (!input.value) input.value = [getSelectedSnapshotDate(), qualityData.cash_flows.confirmed_through].filter(Boolean).sort().pop() || '';
         const now = new Date();
         input.max = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
     } catch (err) {
         qualityData = null;
+        renderQuarterProgress();
         document.getElementById('coverage-status').textContent = err.message;
     }
 }
@@ -372,22 +453,13 @@ async function commitImport(kind, button) {
 async function refreshQuarters(selectQuarter) {
     snapshots = await (await fetch('/api/snapshots')).json();
     const select = document.getElementById('entryQuarter');
-    select.disabled = !snapshots.length;
-    if (!snapshots.length) {
-        select.innerHTML = '<option value="">No quarters yet — import a CSV first</option>';
-        document.getElementById('manualSave').disabled = true;
-        ++manualLoadSeq;
-        document.getElementById('cashEntries').replaceChildren();
-        document.getElementById('ppkAmount').value = '';
-        document.getElementById('mortgageAmount').value = '';
-        return;
-    }
-    select.innerHTML = snapshots.map(s =>
-        `<option value="${s.id}">${s.quarter}</option>`
+    const previous = select.value;
+    select.innerHTML = '<option value="">New quarter — import positions</option>' + snapshots.map(s =>
+        `<option value="${s.id}">${s.quarter} · ${s.snapshot_date}</option>`
     ).join('');
     const match = snapshots.find(s => s.quarter === selectQuarter);
-    if (match) select.value = match.id;
-    if (select.value) loadManualEntries(select.value);
+    select.value = match ? match.id : snapshots.some(s => String(s.id) === previous) ? previous : (snapshots[0]?.id || '');
+    selectedQuarterChanged();
 }
 
 // ── Import journal and guarded undo ──────────────────
