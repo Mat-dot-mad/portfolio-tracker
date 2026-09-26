@@ -6,6 +6,9 @@ Contributions are treated as arriving at period end, rather than time-weighted.
 """
 
 
+from functools import lru_cache
+
+
 def annotate(timeline):
     previous = None
     for row in timeline:
@@ -24,7 +27,8 @@ def xirr(cash_flows):
     perspective. Same-day flows are netted. Solve in log(1+r) space, using
     derivative roots to partition monotonic intervals and detect multiple
     solutions rather than returning whichever rate a starting guess reaches.
-    Scaled discount factors avoid overflow near -100%.
+    Logarithmic coefficients avoid overflow/underflow during differentiation.
+    An explicit stack supports long histories without a recursion-depth limit.
     """
     import math
     from datetime import date
@@ -42,21 +46,35 @@ def xirr(cash_flows):
             daily[when] = daily.get(when, 0.0) + amount
     except (TypeError, ValueError):
         return unavailable('Cash-flow dates or amounts are invalid.')
+    if not all(math.isfinite(v) for v in daily.values()):
+        return unavailable('Cash-flow amounts must be finite.')
     values = [(d, v) for d, v in sorted(daily.items()) if v != 0]
     if len(values) < 2 or values[0][0] == values[-1][0]:
         return unavailable('XIRR needs cash flows on at least two different dates.')
     if not any(v < 0 for _, v in values) or not any(v > 0 for _, v in values):
         return unavailable('XIRR needs both money invested and a positive withdrawal or ending value.')
+    # Keyed by the actual dated amounts, including the ending balance. Imports
+    # and balance edits automatically use a new key; callers get their own dict.
+    return _solve_xirr(tuple(values)).copy()
+
+
+@lru_cache(maxsize=16)
+def _solve_xirr(values):
+    import math
+
+    def unavailable(reason):
+        return {'rate': None, 'reason': reason}
+
     start = values[0][0]
-    scale = max(abs(v) for _, v in values)
-    terms = [((d - start).days / 365.0, v / scale) for d, v in values]
+    terms = [((d - start).days / 365.0, 1 if v > 0 else -1, math.log(abs(v)))
+             for d, v in values]
     low, high = math.log(1e-12), math.log1p(1e6)
 
     def evaluate(terms, log_rate):
-        exponents = [-log_rate * years for years, _ in terms]
+        exponents = [coefficient - log_rate * years for years, _, coefficient in terms]
         largest = max(exponents)
-        weighted = [amount * math.exp(exponent - largest)
-                    for (_, amount), exponent in zip(terms, exponents)]
+        weighted = [sign * math.exp(exponent - largest)
+                    for (_, sign, _), exponent in zip(terms, exponents)]
         # Relative residual: multiplying by a positive scaling factor changes
         # neither roots nor signs, but keeps both extreme endpoints finite.
         return math.fsum(weighted) / math.fsum(abs(v) for v in weighted)
@@ -74,28 +92,38 @@ def xirr(cash_flows):
                 right = middle
         raise ValueError('XIRR did not converge.')
 
-    def roots(terms, depth=0):
-        # Factoring out the earliest exponential leaves a constant first term
-        # without changing roots. Its derivative then has one fewer term.
-        first = terms[0][0]
-        terms = [(t - first, c) for t, c in terms]
-        signs = [c > 0 for _, c in terms]
-        changes = sum(a != b for a, b in zip(signs, signs[1:]))
-        if changes == 0:
-            return []
-        if changes == 1:
-            left, right = evaluate(terms, low), evaluate(terms, high)
-            if left == 0:
-                return [low]
-            if right == 0:
-                return [high]
-            return [bisect(terms, low, high)] if left * right < 0 else []
-        if depth >= 200:
-            raise ValueError('This cash-flow pattern is too complex to establish a unique XIRR safely.')
-        derivative = [(t, -t * c) for t, c in terms[1:]]
-        maximum = max(abs(c) for _, c in derivative)
-        derivative = [(t, c / maximum) for t, c in derivative]
-        turning = roots(derivative, depth + 1)
+    def roots(terms):
+        # Each derivative removes the earliest term after factoring out its
+        # positive exponential. Retain the parents for iterative unwinding.
+        # Store coefficient magnitudes as logs: hundreds of derivatives can
+        # otherwise silently underflow and lose terms (and potential roots).
+        parents = []
+        while True:
+            first = terms[0][0]
+            terms = [(t - first, sign, c) for t, sign, c in terms]
+            signs = [sign for _, sign, _ in terms]
+            changes = sum(a != b for a, b in zip(signs, signs[1:]))
+            if changes == 0:
+                turning = []
+                break
+            if changes == 1:
+                left, right = evaluate(terms, low), evaluate(terms, high)
+                if left == 0:
+                    turning = [low]
+                elif right == 0:
+                    turning = [high]
+                else:
+                    turning = [bisect(terms, low, high)] if left * right < 0 else []
+                break
+            parents.append(terms)
+            derivative = [(t, -sign, c + math.log(t)) for t, sign, c in terms[1:]]
+            maximum = max(c for _, _, c in derivative)
+            terms = [(t, sign, c - maximum) for t, sign, c in derivative]
+        for parent in reversed(parents):
+            turning = partition_roots(parent, turning)
+        return turning
+
+    def partition_roots(terms, turning):
         points = [low, *turning, high]
         found = []
         # Include tangencies: a repeated root need not change the NPV sign.
