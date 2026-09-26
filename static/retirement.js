@@ -218,6 +218,22 @@ function renderFailureExplanation(d) {
         container.appendChild(p);
     };
     const f = d.failure_analysis;
+    const summary = document.getElementById('failure-summary');
+    summary.replaceChildren();
+    const headline = document.createElement('p');
+    headline.className = 'mb-1 fw-semibold';
+    headline.textContent = f.failed_count === 0
+        ? `Spending is covered through age ${Number(d.settings.horizon_age) - 1} in all simulated runs.`
+        : `${f.failed_count} of ${f.paths} runs fall short; median first shortfall at age ${f.median_age}.`;
+    summary.appendChild(headline);
+    const note = document.createElement('p');
+    note.className = 'small text-muted mb-2';
+    note.textContent = f.example
+        ? `Example failed run: ${formatPLN(f.example.shortfall)} unfunded in that year` +
+          (f.example.locked > 1e-6 ? `, with ${formatPLN(f.example.locked)} still locked.` : ', after capital is exhausted.')
+        : 'Under the current assumptions; this is not a guarantee.';
+    if (d.return_source === 'fixed') note.textContent += ' Fixed-return mode: all runs are identical.';
+    summary.appendChild(note);
     if (d.return_source === 'fixed') add('Fixed-return mode: every run follows the same return sequence. The result is a single projection, not an estimate of market uncertainty.', 'small text-muted');
     if (f.failed_count === 0) {
         add(`None of the ${f.paths} simulated runs left spending unfunded before age ${d.settings.horizon_age}.`, 'text-positive mb-2');
@@ -655,7 +671,7 @@ function setStatus(text, cls = 'text-muted') {
 }
 
 function setBusy(busy) {
-    for (const id of ['results-row', 'chart-note', 'failure-explanation']) {
+    for (const id of ['results-row', 'chart-note', 'failure-summary', 'failure-explanation']) {
         const el = document.getElementById(id);
         if (el) el.classList.toggle('recalculating', busy);
     }
