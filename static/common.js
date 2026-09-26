@@ -138,7 +138,7 @@ function setExactRangeValue(slider, value) {
 }
 
 function syncNumberFromRange(slider, input, scale = 1) {
-    input.value = Number((Number(slider.value) * scale).toPrecision(12));
+    input.value = scale === 1 ? slider.value : Number((Number(slider.value) * scale).toPrecision(15));
 }
 
 function bindNumberToRange(slider, input, {scale = 1, onValid, onInvalid}) {
