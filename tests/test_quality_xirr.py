@@ -181,3 +181,55 @@ def test_reinvestment_after_withdrawal_with_unique_xirr():
 def test_repeated_root_without_sign_crossing():
     result = performance.xirr([('2025-01-01', -100), ('2026-01-01', 220), ('2027-01-01', -121)])
     assert result['rate'] == pytest.approx(.1)
+
+
+@pytest.mark.parametrize('count,expected', [(650, -.12), (1100, .08)])
+def test_long_mixed_history_has_known_return(count, expected):
+    # Exceeds both the former 200-level cap and Python's recursion limit.
+    # Grow each flow to the valuation date at a known rate to create an
+    # independently specified ending balance, with hundreds of withdrawals.
+    from datetime import timedelta
+    start = date(2020, 1, 1)
+    flows = [(start.isoformat(), -10000)]
+    flows.extend(((start + timedelta(days=i * 3)).isoformat(), 10 if i % 2 else -100)
+                 for i in range(1, count))
+    end = start + timedelta(days=count * 3)
+    ending = -sum(value * (1 + expected) ** ((end - date.fromisoformat(day)).days / 365)
+                  for day, value in flows)
+    flows.append((end.isoformat(), ending))
+    assert performance.xirr(flows)['rate'] == pytest.approx(expected, abs=1e-9)
+
+
+def test_small_coefficients_survive_long_derivative_chain():
+    # Multiplying the two-root annual polynomial by a positive polynomial
+    # preserves its roots while producing hundreds of alternating cash flows.
+    from datetime import timedelta
+    coefficients = [0.0] * 653
+    for i in range(651):
+        weight = 1e-200 if i % 2 else 1
+        for j, value in enumerate((-100, 230, -132)):
+            coefficients[i + j] += weight * value
+    start = date(1000, 1, 1)
+    flows = [((start + timedelta(days=365 * i)).isoformat(), value)
+             for i, value in enumerate(coefficients)]
+    result = performance.xirr(flows)
+    assert result['rate'] is None
+    assert 'multiple' in result['reason']
+
+
+def test_xirr_cache_tracks_actual_inputs_and_cannot_be_mutated():
+    performance._solve_xirr.cache_clear()
+    flows = [('2025-01-01', -1000), ('2026-01-01', 1100)]
+    result = performance.xirr(flows)
+    result['rate'] = 99
+    assert performance.xirr(flows)['rate'] == pytest.approx(.1)
+    assert performance._solve_xirr.cache_info().hits == 1
+    assert performance.xirr([flows[0], ('2026-01-01', 1200)])['rate'] == pytest.approx(.2)
+    assert performance.xirr([('2024-01-02', -1000), flows[1]])['rate'] != pytest.approx(.1)
+
+
+def test_overflow_in_same_day_netting_is_rejected():
+    result = performance.xirr([('2025-01-01', -1e308), ('2025-01-01', -1e308),
+                               ('2026-01-01', 100)])
+    assert result['rate'] is None
+    assert 'finite' in result['reason']
