@@ -133,6 +133,14 @@
     <div class="row g-3 mb-3" id="levers-primary"></div>
     <div class="row g-3 mb-4" id="levers-secondary"></div>
 
+    <section class="card mb-4" aria-labelledby="failure-title">
+        <div class="card-body">
+            <h5 id="failure-title">Where the plan runs short</h5>
+            <div id="failure-explanation" aria-live="polite"></div>
+        </div>
+    </section>
+    <div class="alert alert-secondary small" id="mortgage-note"></div>
+
     <!-- Accessibility of current capital -->
     <div class="card mb-4">
         <div class="card-body">
@@ -140,8 +148,8 @@
             <p class="text-muted small mb-2" id="bucket-summary"></p>
             <div class="bucket-bar mb-2" id="bucket-bar"></div>
             <p class="setting-note mb-0">
-                Retiring before the IKE age means bridging on the taxable portion alone.
-                A plan can look fully funded on total net worth and still fail on that bridge.
+                The model treats IKE, IKZE and PPK as unavailable before their configured access ages.
+                Early withdrawals with penalties are not modelled. Account balances are before withdrawal tax.
             </p>
         </div>
     </div>

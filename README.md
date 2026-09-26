@@ -307,3 +307,25 @@ records, restores and undo timestamps commit atomically. Undone records remain
 visible; this is an audit trail, not a redo feature. A new `import_history` table
 and index are created automatically on startup; no existing financial data is
 migrated or changed.
+
+### Retirement shortfall explanations
+
+The retirement page reports how many of the 300 seeded simulations first run
+short with locked capital still present, and how many fail after exhausting
+capital. A single actual failing run, selected at the middle first-shortfall
+age, shows spending, income, net withdrawals, withdrawal tax and the unfunded
+gap. Remaining locked balances include their configured access ages. The
+headline, first-failure statistics and chart use the same 300 return sequences.
+The year-by-year table remains a separate run chosen by median ending capital.
+
+Balances are recorded after that year's growth, income and spending. Accessible
+net balances estimate remaining cash after withdrawal taxes. Chart capital is
+before tax, and locked-capital medians are calculated directly rather than by
+subtracting medians. Failed runs continue for illustration; accumulated
+unfunded spending is not treated as debt or recovered from later balances.
+Fixed-return mode produces identical paths and is labelled accordingly.
+
+The planner uses investment balances, not net worth. Mortgage debt is not
+subtracted and repayment schedules are not simulated. Include expected
+retirement repayments in annual spending; spending remains constant in today's
+money and does not automatically fall at a mortgage payoff date.
