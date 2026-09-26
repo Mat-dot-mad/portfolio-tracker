@@ -917,19 +917,13 @@ def _retirement_result(settings):
         min_age=int(params["current_age"]) + 1,
         max_age=min(75, int(params["horizon_age"]) - 1), seed=42)
 
-    chosen = retirement.success_rate(params, returns, paths=300, seed=42)
-
-    # Where plans start failing. Without this a 0%-success plan showed a chart
-    # that simply stopped, with capital still on screen — it read as "fine,
-    # then the data ends" rather than "you run short here".
-    shortfall_ages = [a for a in retirement.first_shortfall_ages(
-        params, returns, paths=200, seed=42) if a is not None]
-    median_shortfall_age = (sorted(shortfall_ages)[len(shortfall_ages) // 2]
-                            if shortfall_ages else None)
+    failures = retirement.failure_analysis(params, returns, paths=300, seed=42)
+    chosen = failures["success_rate"]
+    median_shortfall_age = failures["median_age"]
     sustainable = retirement.sustainable_spending(
         params, returns, threshold=threshold, paths=200, seed=42)
-    path = retirement.median_path(params, returns, paths=200, seed=42)
-    projection = retirement.representative_run(params, returns, paths=200, seed=42)
+    path = retirement.median_path(params, returns, paths=300, seed=42)
+    projection = retirement.representative_run(params, returns, paths=300, seed=42)
 
     return jsonify({
         "available": True,
@@ -959,7 +953,10 @@ def _retirement_result(settings):
         "earliest_feasible_rate": round(rate, 3),
         "chosen_age_success_rate": round(chosen, 3),
         "median_first_shortfall_age": median_shortfall_age,
-        "shortfall_run_share": round(len(shortfall_ages) / 200, 3),
+        "shortfall_run_share": round(failures["failed_count"] / failures["paths"], 3),
+        "failure_analysis": failures,
+        "mortgage_balance": (data["mortgage_total"] if any(e["type"] == "mortgage"
+                                                       for e in data["manual_entries"]) else None),
         "sustainable_spending_at_chosen_age": round(sustainable, -2),
         "path": path,
         # Year-by-year detail for the projection table. One run, so the columns

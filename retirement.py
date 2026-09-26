@@ -190,6 +190,7 @@ def simulate_path(params, returns, rng, stop_on_failure=True):
 
         shortfall = 0.0
         income = 0.0
+        withdrawal_tax = 0.0
         spending = params["annual_spending"] if age >= params["retirement_age"] else 0.0
 
         if spending > 0:
@@ -221,8 +222,13 @@ def simulate_path(params, returns, rng, stop_on_failure=True):
                 if bucket.value <= 0:
                     continue
                 gross_wanted = _gross_for_net(need, name, bucket, params, age)
-                taken = bucket.take(gross_wanted)
-                need -= _net_of_tax(taken, name, bucket, params, age)
+                # Compute tax before take() empties the bucket and loses its
+                # gain fraction. Otherwise a final taxable withdrawal is untaxed.
+                gross = min(gross_wanted, bucket.value)
+                net = _net_of_tax(gross, name, bucket, params, age)
+                taken = bucket.take(gross)
+                withdrawal_tax += taken - net
+                need -= net
 
             shortfall = max(0.0, need)
 
@@ -238,6 +244,11 @@ def simulate_path(params, returns, rng, stop_on_failure=True):
             "age": age,
             "total": total,
             "reachable": reachable,
+            "reachable_net": sum(_net_of_tax(b.value, name, b, params, age)
+                                 for name, b in buckets.items() if _is_accessible(name, params, age)),
+            "locked": sum(b.value for name, b in buckets.items()
+                          if not _is_accessible(name, params, age)),
+            "withdrawal_tax": withdrawal_tax,
             "taxable": buckets[TAXABLE].value,
             "ike": buckets[IKE].value,
             "ikze": buckets[IKZE].value,
@@ -350,6 +361,7 @@ def median_path(params, returns, paths=200, seed=None):
             # bridge — and unlike the total, it reaches zero when a plan fails.
             "reachable_p10": percentile("reachable", 0.10),
             "reachable_p50": percentile("reachable", 0.50),
+            "locked_p50": percentile("locked", 0.50),
             "failed_share": short / len(runs),
         })
     return out
@@ -385,3 +397,32 @@ def first_shortfall_ages(params, returns, paths=200, seed=None):
         _ok, rec = simulate_path(params, returns, random.Random(rng.getrandbits(64)), stop_on_failure=True)
         ages.append(next((y["age"] for y in rec if y["shortfall"] > 1e-6), None))
     return ages
+
+
+def failure_analysis(params, returns, paths=300, seed=None):
+    """First shortfalls from the same seeded sample used for the headline.
+
+    The example is an actual failed run, sorted by first-failure age, then gap;
+    its cash flows reconcile. It is not a combination of unrelated medians.
+    Amounts describe that year's end, after growth, income and withdrawals.
+    """
+    rng = random.Random(seed)
+    failures = []
+    for _ in range(paths):
+        ok, rows = simulate_path(params, returns, random.Random(rng.getrandbits(64)))
+        if not ok:
+            row = rows[-1]
+            locked = [dict(bucket=name, value=row[name], access_age=params[name + "_access_age"])
+                      for name in (IKE, IKZE, PPK)
+                      if not _is_accessible(name, params, row["age"]) and row[name] > 1e-6]
+            failures.append(dict(row, locked_accounts=locked,
+                                 reason="locked_capital" if locked else "depleted"))
+    failures.sort(key=lambda row: (row["age"], row["shortfall"]))
+    count = len(failures)
+    return dict(paths=paths, failed_count=count, success_rate=1-count/paths,
+                earliest_age=failures[0]["age"] if count else None,
+                median_age=failures[count//2]["age"] if count else None,
+                latest_age=failures[-1]["age"] if count else None,
+                with_locked_capital=sum(row["reason"]=="locked_capital" for row in failures),
+                depleted=sum(row["reason"]=="depleted" for row in failures),
+                example=failures[count//2] if count else None)

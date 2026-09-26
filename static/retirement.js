@@ -151,9 +151,9 @@ function refreshLeverLabels() {
 
         const ticks = document.getElementById(`ticks-${l.key}`);
         ticks.innerHTML = !l.ticks ? '' : l.ticks(live)
-            .filter(t => t.at >= l.min && t.at <= l.max)
+            .filter(t => t.at >= Number(el.min) && t.at <= Number(el.max))
             .map(t => {
-                const pct = ((t.at - l.min) / (l.max - l.min)) * 100;
+                const pct = ((t.at - Number(el.min)) / (Number(el.max) - Number(el.min))) * 100;
                 return `<span style="left:${pct}%">${t.label} ${t.at}</span>`;
             }).join('');
     }
@@ -172,7 +172,7 @@ function renderResults(d) {
         ageEl.textContent = 'Not reached';
         ageEl.className = 'card-value text-negative';
         ageDetail.textContent =
-            `No age up to 75 clears ${formatPct(threshold)}. Best was ${formatPct(d.earliest_feasible_rate)}.`;
+            `No age up to ${Math.min(75, Number(s.horizon_age) - 1)} clears ${formatPct(threshold)}. Best was ${formatPct(d.earliest_feasible_rate)}.`;
     } else {
         ageEl.textContent = d.earliest_feasible_age;
         ageEl.className = 'card-value text-positive';
@@ -184,9 +184,8 @@ function renderResults(d) {
     const meets = d.chosen_age_success_rate >= threshold;
     rateEl.textContent = formatPct(d.chosen_age_success_rate);
     rateEl.className = `card-value ${meets ? 'text-positive' : 'text-negative'}`;
-    const shortfallNote = d.median_first_shortfall_age
-        ? ` Money runs short around age ${d.median_first_shortfall_age}` +
-          ` in ${formatPct(d.shortfall_run_share)} of runs.`
+    const shortfallNote = d.median_first_shortfall_age != null
+        ? ` ${formatPct(d.shortfall_run_share)} of runs fail; their median first shortfall is at age ${d.median_first_shortfall_age}.`
         : '';
     document.getElementById('chosen-detail').textContent =
         `Retiring at ${chosenAge} — ${meets ? 'meets' : 'below'} your ${formatPct(threshold)} bar.` +
@@ -195,14 +194,14 @@ function renderResults(d) {
     document.getElementById('sustainable').textContent =
         formatPLN(d.sustainable_spending_at_chosen_age);
 
+    renderFailureExplanation(d);
     renderBuckets(d);
     renderProjectionTable(d);
 
     document.getElementById('chart-note').innerHTML =
-        `<strong class="text-positive">Spendable now</strong> is what you can actually reach ` +
-        `at each age; <span class="text-primary">total capital</span> includes money still ` +
-        `locked in IKE, IKZE and PPK. When the two diverge, the gap is unreachable — ` +
-        `a plan can run short while total capital is still climbing.<br>` +
+        `<strong class="text-positive">Accessible capital</strong> shows remaining balances after that year's spending, before withdrawal tax. ` +
+        `Total capital also includes age-locked accounts. Each line is a separate percentile; subtracting their medians does not give median locked capital. ` +
+        `Failed runs continue for illustration: later growth does not pay earlier unfunded spending.<br>` +
         `${d.return_source} returns compounding at ` +
         `<strong>${formatPct(d.mean_real_return, 1)}</strong> real per year ` +
         `(geometric; arithmetic mean is ${formatPct(d.arithmetic_real_return, 1)}).` +
@@ -211,11 +210,51 @@ function renderResults(d) {
             : '');
 }
 
+function renderFailureExplanation(d) {
+    const container = document.getElementById('failure-explanation');
+    container.replaceChildren();
+    const add = (text, cls = 'small mb-2') => {
+        const p = document.createElement('p'); p.className = cls; p.textContent = text;
+        container.appendChild(p);
+    };
+    const f = d.failure_analysis;
+    if (d.return_source === 'fixed') add('Fixed-return mode: every run follows the same return sequence. The result is a single projection, not an estimate of market uncertainty.', 'small text-muted');
+    if (f.failed_count === 0) {
+        add(`None of the ${f.paths} simulated runs left spending unfunded before age ${d.settings.horizon_age}.`, 'text-positive mb-2');
+        add('This applies to the selected assumptions and simulated returns; it is not a guarantee.');
+    } else {
+        add(`${f.failed_count} of ${f.paths} runs could not fund all spending. First shortfalls range from age ${f.earliest_age} to ${f.latest_age}; the median among failed runs is ${f.median_age}.`);
+        add(`${f.with_locked_capital} first shortfalls occurred with capital still locked by the model; ${f.depleted} occurred after capital was exhausted.`);
+        const e = f.example;
+        add(`Example failing run — first shortfall at age ${e.age}`, 'fw-semibold mt-3 mb-2');
+        add(`Annual spending ${formatPLN(e.spending)} = income ${formatPLN(e.income)} + net withdrawals ${formatPLN(e.funded_from_capital)} + unfunded spending ${formatPLN(e.shortfall)}.`);
+        add(`That year's gap is ${formatPLN(e.shortfall)} (equivalent to ${formatPLN(e.shortfall / 12)} per month). Withdrawal tax paid: ${formatPLN(e.withdrawal_tax)}.`, 'text-negative fw-semibold small');
+        add(`After withdrawals: ${formatPLN(e.reachable_net)} accessible after estimated tax; ${formatPLN(e.locked)} still locked, before tax.`);
+        for (const account of e.locked_accounts) {
+            add(`${BUCKET_LABELS[account.bucket]}: ${formatPLN(account.value)} locked until configured age ${account.access_age} (${account.access_age - e.age} years later).`);
+        }
+        add(e.locked_accounts.length
+            ? 'The model cannot use those locked balances to fill this year’s gap. Their presence does not mean they would cover all future spending.'
+            : 'Accessible capital has been exhausted; income and net withdrawals cannot cover the annual spending target.');
+        add('This is one actual failed run chosen at the middle first-shortfall age. Its figures belong together; the year-by-year table below uses a separate run chosen by ending capital.', 'small text-muted');
+    }
+    document.getElementById('mortgage-note').textContent =
+        (d.mortgage_balance == null ? 'Mortgage balance is not recorded for the latest snapshot. '
+            : `Recorded mortgage balance: ${formatPLN(d.mortgage_balance)}. `) +
+        'The planner projects investment accounts, not net worth: it does not subtract mortgage debt or calculate repayments. ' +
+        'Include any mortgage payments you expect in retirement in Spend / year. Spending stays constant in today’s money; payments do not automatically stop at a payoff date. ' +
+        'Use separate spending scenarios to compare assumptions; a changing repayment schedule is not modelled.';
+}
+
 function renderBuckets(d) {
     const b = d.balances;
     const total = b.taxable + b.ike + b.ikze + (b.ppk || 0);
     const s = d.settings;
-    if (!total) return;
+    if (!total) {
+        document.getElementById('bucket-bar').replaceChildren();
+        document.getElementById('bucket-summary').textContent = 'No starting capital recorded.';
+        return;
+    }
 
     const segments = [
         { label: 'Taxable — any time', value: b.taxable, color: '#198754' },
@@ -236,9 +275,10 @@ function renderBuckets(d) {
         bar.appendChild(el);
     }
 
-    const locked = b.ike + b.ikze + (b.ppk || 0);
+    const locked = ['ike', 'ikze', 'ppk'].reduce((sum, name) =>
+        sum + (Number(s.current_age) < Number(s[`${name}_access_age`]) ? (b[name] || 0) : 0), 0);
     document.getElementById('bucket-summary').innerHTML =
-        `<strong>${formatPLN(b.taxable)}</strong> reachable now · ` +
+        `<strong>${formatPLN(total - locked)}</strong> accessible now, before tax · ` +
         `<strong>${formatPLN(b.ike)}</strong> from age ${s.ike_access_age} · ` +
         `<strong>${formatPLN(b.ikze)}</strong> from age ${s.ikze_access_age}` +
         ((b.ppk || 0) > 0 ? ` · <strong>${formatPLN(b.ppk)}</strong> PPK from age ${s.ppk_access_age}` : '') + '. ' +
@@ -308,7 +348,10 @@ function renderProjectionTable(d) {
                 ? `Returns are fixed, so this is the only path the model produces.`
                 : `Returns are resampled from your history, so another run would differ; ` +
                   `the chart's bands show that spread.`) +
-            ` Greyed cells are locked at that age. Red rows cannot fund spending.`;
+            ` Greyed cells are locked at that age. Red rows cannot fund spending. ` +
+            `Balances are at year end; accessible net estimates remaining cash after withdrawal tax. ` +
+            `Income includes ZUS and PPK payments; from capital is net of tax. ` +
+            `Unfunded spending is not borrowed or deducted from later balances. This run may differ from the failing example above.`;
     }
 
     head.innerHTML = `
@@ -319,13 +362,16 @@ function renderProjectionTable(d) {
             <th class="num">IKZE</th>
             <th class="num">PPK</th>
             <th class="num">Total</th>
-            <th class="num">Spendable</th>
+            <th class="num">Accessible net</th>
+            <th class="num">Locked</th>
             <th class="num">Return</th>
             <th class="num">Paid in</th>
             <th class="num">Spending</th>
             <th class="num">Income</th>
             <th class="num">From capital</th>
+            <th class="num">Withdrawal tax</th>
             <th class="num">Short</th>
+            <th class="num">Unfunded so far</th>
         </tr>`;
 
     const cell = (value, locked) =>
@@ -334,7 +380,7 @@ function renderProjectionTable(d) {
     body.innerHTML = rows.map(r => {
         const age = r.age;
         const retired = age >= retireAge;
-        const isShort = r.shortfall > 1;
+        const isShort = r.shortfall > 1e-6;
         // A milestone row is where something changes: retirement or an unlock.
         const milestone = [retireAge, gates.ike, gates.ikze, gates.ppk, zusAge].includes(age);
         const cls = [isShort ? 'short' : (retired ? 'retired' : ''),
@@ -347,14 +393,17 @@ function renderProjectionTable(d) {
                 ${cell(r.ikze, age < gates.ikze)}
                 ${cell(r.ppk, age < gates.ppk)}
                 <td class="num fw-semibold">${formatPLN(r.total)}</td>
-                <td class="num">${formatPLN(r.reachable)}</td>
+                <td class="num">${formatPLN(r.reachable_net)}</td>
+                <td class="num">${formatPLN(r.locked)}</td>
                 <td class="num">${formatPct(r.return_rate, 1)}</td>
                 <td class="num">${r.contributions ? formatPLN(r.contributions) : '—'}</td>
                 <td class="num">${r.spending ? formatPLN(r.spending) : '—'}</td>
                 <td class="num">${r.income ? formatPLN(r.income) : '—'}</td>
                 <td class="num">${r.funded_from_capital ? formatPLN(r.funded_from_capital) : '—'}</td>
+                <td class="num">${formatPLN(r.withdrawal_tax)}</td>
                 <td class="num ${isShort ? 'text-negative fw-semibold' : ''}">${
                     isShort ? formatPLN(r.shortfall) : '—'}</td>
+                <td class="num">${formatPLN(r.cumulative_shortfall)}</td>
             </tr>`;
     }).join('');
 }
@@ -389,7 +438,7 @@ const milestonesPlugin = {
 
         // Where plans start running short. Drawn solid and labelled, because
         // it is the single most important thing on the chart when it exists.
-        if (opts.shortfallAge) {
+        if (opts.shortfallAge != null) {
             const sx = xFor(opts.shortfallAge);
             if (sx !== null) {
                 ctx.save();
@@ -401,7 +450,7 @@ const milestonesPlugin = {
                 ctx.stroke();
                 ctx.fillStyle = 'rgba(220, 53, 69, 0.95)';
                 ctx.font = 'bold 11px sans-serif';
-                ctx.fillText(`runs short at ${opts.shortfallAge}`, sx + 5, chartArea.top + 28);
+                ctx.fillText(`median first shortfall: ${opts.shortfallAge}`, sx + 5, chartArea.top + 28);
                 ctx.restore();
             }
         }
@@ -468,10 +517,10 @@ function renderChart(d) {
                   borderColor: 'rgba(13,110,253,0.55)', borderWidth: 2,
                   borderDash: [6, 4], pointRadius: 0, fill: false, tension: 0.2, order: 3 },
                 // The line that answers "can I actually pay for my life?".
-                { label: 'Spendable now (median)', data: path.map(p => p.reachable_p50),
+                { label: 'Accessible capital (median, before tax)', data: path.map(p => p.reachable_p50),
                   borderColor: '#198754', borderWidth: 3, pointRadius: 0,
                   fill: false, tension: 0.2, order: 1 },
-                { label: 'Spendable, poor case (P10)', data: path.map(p => p.reachable_p10),
+                { label: 'Accessible capital (P10, before tax)', data: path.map(p => p.reachable_p10),
                   borderColor: '#dc3545', borderWidth: 2, borderDash: [3, 3],
                   pointRadius: 0, fill: false, tension: 0.2, order: 2 },
                 // Only drawn when something actually fails, so a healthy plan
@@ -526,14 +575,14 @@ function renderChart(d) {
                             }
                             return `${ctx.dataset.label}: ${formatPLN(ctx.parsed.y)}`;
                         },
-                        // The gap between the two capital lines IS the locked
-                        // money, so name it rather than making it be inferred.
+                        // Use the locked-balance percentile itself: subtracting
+                        // separately computed medians would not be valid.
                         afterBody: items => {
                             const pt = path[items[0].dataIndex];
                             if (!pt) return '';
-                            const locked = pt.p50 - pt.reachable_p50;
+                            const locked = pt.locked_p50;
                             if (locked <= 1) return '';
-                            return `Locked behind an age gate: ${formatPLN(locked)}`;
+                            return `Locked capital (median): ${formatPLN(locked)}`;
                         },
                     },
                 },
@@ -562,7 +611,19 @@ function renderChart(d) {
 function fillForm(settings, data) {
     for (const key of SETTING_KEYS) {
         const el = document.getElementById(key);
-        if (el) el.value = settings[key];
+        if (el) {
+            const lever = allLevers().find(l => l.key === key);
+            if (lever) {
+                // Do not silently clamp a saved assumption to a slider's
+                // suggested range or round it to the nearest step.
+                const value = Number(settings[key]);
+                el.min = Math.min(lever.min, value);
+                el.max = Math.max(lever.max, value);
+                const steps = (value - Number(el.min)) / lever.step;
+                el.step = Math.abs(steps - Math.round(steps)) < 1e-8 ? lever.step : 'any';
+            }
+            el.value = settings[key];
+        }
     }
 
     // The tracked quarterly PPK balance wins over the planner setting, and the
@@ -594,7 +655,7 @@ function setStatus(text, cls = 'text-muted') {
 }
 
 function setBusy(busy) {
-    for (const id of ['results-row', 'chart-note']) {
+    for (const id of ['results-row', 'chart-note', 'failure-explanation']) {
         const el = document.getElementById(id);
         if (el) el.classList.toggle('recalculating', busy);
     }
