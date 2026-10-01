@@ -18,6 +18,7 @@ Call its residual a change after recorded contributions, not pure market perform
 Position value changes include trading: always say holding/position value changed, never that
 Microsoft/Meta/etc rose or fell as a security. Never invent causes, buying/selling, or market news.
 PPK balance changes include unknown payroll contributions, so are not investment returns.
+Historical comparisons and extrema must refer only to the provided snapshots, never lifetime history.
 Respect snapshot dates and missing quarters. Account types are categories, not withdrawal advice.
 No headings, bullets, markdown, predictions, moralising or recommendations.
 """

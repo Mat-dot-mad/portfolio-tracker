@@ -407,6 +407,7 @@ def _build_claude_payload(data):
         return None
     payload = dict(payload)
     payload.pop("contribution_vs_recent_4q_average_pct", None)
+    payload.pop("quarters_of_history", None)
     payload["schema_version"] = 2
     payload["currency"] = "PLN"
     quality = data.get("data_quality", {})
@@ -463,6 +464,7 @@ def _build_claude_payload(data):
     if history[-1]["ppk_pln"] is None:
         payload["current_investments_by_account_type_pln"]["ppk"] = None
     payload["quarterly_history"] = history[-8:]
+    payload["provided_snapshot_count"] = len(payload["quarterly_history"])
     latest = history[-1]
     if latest["return_breakdown"] is None:
         payload["market_return_pct_excluding_contributions"] = None
