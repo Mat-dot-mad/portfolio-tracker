@@ -103,6 +103,8 @@ def test_rich_history_reconciles_and_gates_missing_data(client, make_snapshot, m
     db.confirm_cash_flow_coverage('2025-06-30', coverage['revision'])
     data = app_module._build_dashboard_data()
     payload = app_module._build_claude_payload(data)
+    assert 'quarters_of_history' not in payload
+    assert payload['provided_snapshot_count'] == 2
     latest = payload['quarterly_history'][-1]
     breakdown = latest['return_breakdown']
     assert breakdown['opening_investments_plus_cash_excluding_ppk_pln'] == 1100
