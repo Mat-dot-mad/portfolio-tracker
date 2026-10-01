@@ -32,7 +32,7 @@ def generate_commentary(payload_json):
                 "https://api.anthropic.com/v1/messages",
                 headers=headers,
                 json={"model": model, "max_tokens": 4000,
-                      "thinking": {"type": "disabled"},
+                      "thinking": {"type": "between_tools"},
                       "system": gemini.SYSTEM_PROMPT,
                       "messages": [{"role": "user", "content": payload_json}]},
                 timeout=(3, 10),

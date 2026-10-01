@@ -26,7 +26,7 @@ def test_claude_request_and_retry(setup):
     assert commentary.generate_commentary('{}') == ('Review.', 'claude-sonnet-5-5')
     assert setup.call_count == 2
     body = setup.call_args.kwargs['json']
-    assert body['thinking'] == {'type': 'disabled'}
+    assert body['thinking'] == {'type': 'between_tools'}
     assert body['system'] == gemini.SYSTEM_PROMPT
     assert body['messages'] == [{'role': 'user', 'content': '{}'}]
 
