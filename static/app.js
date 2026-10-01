@@ -740,7 +740,15 @@ async function generateCommentary() {
 
     btn.disabled = true;
     btn.textContent = 'Writing…';
-    body.innerHTML = '<p class="text-muted mb-0">Asking Gemini…</p>';
+    const previousReview = body.innerHTML;
+    body.innerHTML = '<p class="text-muted mb-0">Writing your review; temporary failures are retried automatically…</p>';
+    const showError = message => {
+        body.innerHTML = previousReview;
+        const alert = document.createElement('div');
+        alert.className = 'alert alert-danger py-2 mt-2 mb-0';
+        alert.textContent = message;
+        body.appendChild(alert);
+    };
 
     try {
         const resp = await fetch('/api/commentary', { method: 'POST' });
@@ -749,13 +757,10 @@ async function generateCommentary() {
             renderCommentaryText(data.text);
             setCommentaryMeta(data);
         } else {
-            body.innerHTML = `<div class="alert alert-danger py-2 mb-0"></div>`;
-            body.querySelector('.alert').textContent = data.error;
-            document.getElementById('commentary-meta').textContent = '';
+            showError(data.error);
         }
     } catch (err) {
-        body.innerHTML = '<div class="alert alert-danger py-2 mb-0"></div>';
-        body.querySelector('.alert').textContent = `Network error: ${err.message}`;
+        showError(`Network error: ${err.message}`);
     } finally {
         btn.disabled = false;
         btn.textContent = 'Regenerate';
