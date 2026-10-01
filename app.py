@@ -400,6 +400,100 @@ def _build_commentary_payload(data):
     }
 
 
+def _build_claude_payload(data):
+    """Explicit allowlist: amounts and quality context, no raw account identifiers."""
+    payload = _build_commentary_payload(data)
+    if payload is None:
+        return None
+    payload = dict(payload)
+    payload.pop("contribution_vs_recent_4q_average_pct", None)
+    payload["schema_version"] = 2
+    payload["currency"] = "PLN"
+    quality = data.get("data_quality", {})
+    flows = quality.get("cash_flows", {})
+    confirmed = flows.get("confirmed_through")
+    states = {row["id"]: row["balances"] for row in quality.get("snapshots", [])}
+    history = []
+    timeline = data["timeline"]
+    for index, row in enumerate(timeline):
+        balances = states.get(row["id"], {})
+        previous = timeline[index - 1] if index else None
+        previous_balances = states.get(previous["id"], {}) if previous else {}
+        def recorded(kind, value):
+            return round(value, 2) if balances.get(kind) in ("recorded", "confirmed_zero") else None
+        cash = recorded("cash", row["cash_total"])
+        ppk = recorded("ppk", row.get("ppk_total", 0))
+        mortgage = recorded("mortgage", row["mortgage_total"])
+        covered = bool(confirmed and confirmed >= row["snapshot_date"])
+        valid_return = bool(previous and covered and cash is not None and ppk is not None
+                            and all(previous_balances.get(k) in ("recorded", "confirmed_zero")
+                                    for k in ("cash", "ppk")))
+        contributions = round(row.get("net_contributions", 0), 2) if covered and previous else None
+        portfolio = round(row["portfolio_total"], 2) if ppk is not None else None
+        history.append({
+            "quarter": row["quarter"], "snapshot_date": row["snapshot_date"],
+            "portfolio_including_ppk_pln": portfolio,
+            "cash_pln": cash, "ppk_pln": ppk, "mortgage_pln": mortgage,
+            "net_worth_pln": round(portfolio + cash - mortgage, 2)
+                if all(v is not None for v in (portfolio, cash, mortgage)) else None,
+            "net_contributions_pln": contributions,
+            "cash_flow_coverage_confirmed": covered,
+            "balance_status": balances,
+            "return_breakdown": {
+                "opening_investments_plus_cash_excluding_ppk_pln": round(previous["tracked_wealth"], 2),
+                "net_contributions_pln": contributions,
+                "residual_change_after_contributions_pln": round(row["market_gain"], 2),
+                "closing_investments_plus_cash_excluding_ppk_pln": round(row["tracked_wealth"], 2),
+                "approximate_return_pct": round(row["market_return"] * 100, 2)
+                    if row.get("market_return") is not None else None,
+            } if valid_return else None,
+        })
+    for previous, current in zip(history, history[1:]):
+        current["changes_since_previous_snapshot_pln"] = {
+            key: round(current[key] - previous[key], 2)
+            if current[key] is not None and previous[key] is not None else None
+            for key in ("portfolio_including_ppk_pln", "cash_pln", "ppk_pln", "mortgage_pln", "net_worth_pln")
+        }
+    account_types = {kind: 0.0 for kind in ("ike", "ikze", "taxable", "ppk")}
+    for position in data["all_positions"].get(timeline[-1]["id"], []):
+        kind = _classify_account(position.get("account"))
+        account_types[kind] += position["value_pln"]
+    payload["current_investments_by_account_type_pln"] = {
+        kind: round(value, 2) for kind, value in account_types.items()}
+    if history[-1]["ppk_pln"] is None:
+        payload["current_investments_by_account_type_pln"]["ppk"] = None
+    payload["quarterly_history"] = history[-8:]
+    latest = history[-1]
+    if latest["return_breakdown"] is None:
+        payload["market_return_pct_excluding_contributions"] = None
+    if any(r["portfolio_including_ppk_pln"] is None for r in history[-2:]):
+        payload["portfolio_change_pct"] = None
+    if any(r["net_worth_pln"] is None for r in history[-2:]):
+        payload["net_worth_change_pct"] = None
+    payload["data_limitations"] = {
+        "cash_flows_confirmed_through": confirmed,
+        "missing_quarters": quality.get("missing_quarters", []),
+        "holdings_behind": quality.get("holdings_behind"),
+        "future_snapshot": quality.get("future_snapshot"),
+    }
+    payload["notes"] = [
+        "All amounts are PLN. Null means unavailable or unconfirmed, never zero.",
+        "Portfolio includes PPK. Net worth adds cash and subtracts mortgage. "
+        "The return breakdown measures investments plus cash EXCLUDING PPK and mortgage. "
+        "Never compare these different scopes to explain contributions or performance.",
+        "Return breakdown: opening value plus recorded net contributions plus residual "
+        "equals closing value (minor rounding differences possible). Residual is not pure "
+        "security price performance; it can include fees, FX and recording differences. "
+        "Approximate return treats contributions as arriving at period end.",
+        "PPK is updated by quarter-end value only; payroll contributions are unknown, "
+        "so PPK balance changes cannot be called investment returns.",
+        "Holdings value changes include purchases and sales; do not infer why a holding changed. "
+        "The first snapshot has no comparable period contribution figure. "
+        "History entries may span missing quarters; respect snapshot dates.",
+    ]
+    return payload
+
+
 def _payload_hash(payload):
     """Stable fingerprint of the payload, used to detect stale commentary.
 
@@ -420,7 +514,8 @@ def _commentary_state():
     payload = _build_commentary_payload(data)
     if payload is None:
         return None
-    payload_json = json.dumps(payload, ensure_ascii=False, indent=2)
+    payload = {"gemini": payload, "claude": _build_claude_payload(data)}
+    payload_json = json.dumps(payload["gemini"], ensure_ascii=False, indent=2)
     return data["timeline"][-1]["id"], payload, payload_json, _payload_hash(payload)
 
 
@@ -462,7 +557,8 @@ def api_generate_commentary():
 
     snapshot_id, _payload, payload_json, payload_hash = state
     try:
-        text, model = commentary.generate_commentary(payload_json)
+        text, model = commentary.generate_commentary(
+            payload_json, claude_payload_json=json.dumps(_payload["claude"], ensure_ascii=False))
     except ValueError as e:
         return jsonify({"error": str(e)}), 502
 

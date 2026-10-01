@@ -194,13 +194,18 @@ is saved with the review; a Gemini fallback stays marked stale while Claude is
 the primary model. Failed regeneration preserves the previous review.
 Store keys only in `/etc/portfolio.env` on the Pi, then restart `portfolio`.
 
-**What gets sent.** Only derived figures: percentage changes, allocation
-percentages and percentage-point deltas, contribution pace relative to the
-recent average, and position names with the account suffix stripped.
-**Absolute amounts and account names are never included.** This matters because
-Google's free tier permits training use and human review; the paid tier has
-stronger terms. The restriction is enforced by tests in
-`tests/test_commentary.py`, not just by convention.
+**What gets sent.** Claude receives a structured summary with PLN balances,
+up to eight quarterly snapshots, account-type totals (IKE, IKZE, PPK, taxable),
+allocation percentages, sanitized holding names and explicit data limitations.
+Return breakdowns are computed in Python over a consistent scope: investments
+plus cash, excluding PPK and mortgage. Missing/unconfirmed values are null;
+return breakdowns require confirmed cash-flow coverage and recorded balances.
+Personal account names, raw transaction records and account identifiers are not sent.
+
+Gemini always receives the separate percentages-only summary, including on
+fallback. The richer Claude payload is never forwarded to Gemini. Tests enforce
+this routing boundary. Claude API inputs/outputs are not used for training by
+default; standard retention and provider exceptions still apply.
 
 Generation is explicit — it happens when you press the button, never on page
 load. Results are cached per quarter, so a normal visit makes no API call. If

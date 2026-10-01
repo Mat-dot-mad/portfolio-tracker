@@ -7,6 +7,22 @@ import requests
 import gemini
 
 
+CLAUDE_SYSTEM_PROMPT = """Write a factual quarterly portfolio review in 3-5 short paragraphs.
+Use only supplied, precomputed numbers. Do not calculate new numbers or give investment advice.
+Use PLN amounts selectively to explain scale, and quarterly history to describe supported trends.
+Null means unavailable or unconfirmed, not zero. Mention material missing data.
+Portfolio growth, net-worth growth and approximate returns have DIFFERENT asset scopes.
+NEVER compare or subtract their percentages, or use their difference to explain contributions.
+Only the same-scope return_breakdown can describe the balance change after contributions.
+Call its residual a change after recorded contributions, not pure market performance.
+Position value changes include trading: always say holding/position value changed, never that
+Microsoft/Meta/etc rose or fell as a security. Never invent causes, buying/selling, or market news.
+PPK balance changes include unknown payroll contributions, so are not investment returns.
+Respect snapshot dates and missing quarters. Account types are categories, not withdrawal advice.
+No headings, bullets, markdown, predictions, moralising or recommendations.
+"""
+
+
 def is_configured():
     return bool(os.environ.get("ANTHROPIC_API_KEY")) or gemini.is_configured()
 
@@ -17,7 +33,7 @@ def get_model():
     return gemini.get_model()
 
 
-def generate_commentary(payload_json):
+def generate_commentary(payload_json, claude_payload_json=None):
     """Return text and actual model; never label fallback output as Claude."""
     key = os.environ.get("ANTHROPIC_API_KEY")
     if not key:
@@ -33,8 +49,8 @@ def generate_commentary(payload_json):
                 headers=headers,
                 json={"model": model, "max_tokens": 4000,
                       "thinking": {"type": "between_tools"},
-                      "system": gemini.SYSTEM_PROMPT,
-                      "messages": [{"role": "user", "content": payload_json}]},
+                      "system": CLAUDE_SYSTEM_PROMPT,
+                      "messages": [{"role": "user", "content": claude_payload_json or payload_json}]},
                 timeout=(3, 10),
             )
         except requests.RequestException:
