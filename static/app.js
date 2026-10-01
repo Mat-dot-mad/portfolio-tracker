@@ -699,6 +699,11 @@ function renderCommentaryText(text) {
 }
 
 function setCommentaryMeta(data) {
+    const model = data.model || '';
+    const provider = model.startsWith('claude-') ? 'Claude'
+        : model.startsWith('gemini-') ? 'Gemini' : null;
+    document.getElementById('commentary-author').textContent = provider
+        ? `Written by ${provider}` : 'AI-written review';
     const meta = document.getElementById('commentary-meta');
     if (!data.generated_at) { meta.textContent = ''; return; }
     const when = new Date(data.generated_at).toLocaleString('pl-PL');
