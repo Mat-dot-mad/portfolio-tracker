@@ -10,7 +10,7 @@ from datetime import date
 from flask import Flask, render_template, request, redirect, url_for, jsonify, session
 
 import db
-import gemini
+import commentary
 import nbp
 import import_data
 import retirement
@@ -427,8 +427,8 @@ def _commentary_state():
 @app.route("/api/commentary", methods=["GET"])
 def api_get_commentary():
     """Return the cached review. Never calls the API — generation is explicit."""
-    if not gemini.is_configured():
-        return jsonify({"available": False, "reason": "GEMINI_API_KEY not set"})
+    if not commentary.is_configured():
+        return jsonify({"available": False, "reason": "Review API key not set"})
 
     state = _commentary_state()
     if state is None:
@@ -446,15 +446,15 @@ def api_get_commentary():
         "model": cached["model"],
         # Keep the old review readable, but offer regeneration after a model change.
         "stale": (cached["payload_hash"] != payload_hash
-                  or cached["model"] != gemini.get_model()),
+                  or cached["model"] != commentary.get_model()),
     })
 
 
 @app.route("/api/commentary", methods=["POST"])
 def api_generate_commentary():
-    """Generate and cache the review. This is what sends data to Google."""
-    if not gemini.is_configured():
-        return jsonify({"error": "GEMINI_API_KEY is not set"}), 503
+    """Generate and cache the review. This sends the summary to the configured provider."""
+    if not commentary.is_configured():
+        return jsonify({"error": "Review API key is not set"}), 503
 
     state = _commentary_state()
     if state is None:
@@ -462,11 +462,10 @@ def api_generate_commentary():
 
     snapshot_id, _payload, payload_json, payload_hash = state
     try:
-        text = gemini.generate_commentary(payload_json)
+        text, model = commentary.generate_commentary(payload_json)
     except ValueError as e:
         return jsonify({"error": str(e)}), 502
 
-    model = gemini.get_model()
     db.save_commentary(snapshot_id, text, model, payload_hash)
     return jsonify({
         "ok": True,

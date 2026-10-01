@@ -175,14 +175,24 @@ Runs as a systemd service on the Pi, reachable via Tailscale at `http://<your-pi
 | `SECRET_KEY` | Signs Flask session cookies (32-byte hex) |
 | `DASHBOARD_PASSWORD` | Login password — auth is disabled if unset |
 | `DATABASE_PATH` | SQLite file location |
+| `ANTHROPIC_API_KEY` | Enables Claude as the primary quarterly review provider |
+| `ANTHROPIC_MODEL` | Defaults to `claude-sonnet-5-5` |
+| `ANTHROPIC_WORKSPACE_ID` | Required when the Claude key is not scoped to a workspace |
 | `GEMINI_API_KEY` | Enables the quarterly review — the feature is hidden if unset |
 | `GEMINI_MODEL` | Gemini model id (optional; defaults to `gemini-3.8-flash`) |
 
 ## Quarterly review (optional)
 
-Set `GEMINI_API_KEY` to a key from Google AI Studio and a card appears on the
-dashboard that writes a short prose review of the newest quarter. Leave it unset
+Set `ANTHROPIC_API_KEY` (Claude), or `GEMINI_API_KEY` (Google), and a card appears on the
+dashboard that writes a short prose review of the newest quarter. Leave both unset
 and the feature stays completely hidden — nothing is sent anywhere.
+
+Claude uses Sonnet 5.5 with thinking disabled and up to three attempts for temporary
+failures. If those fail and a Gemini key is configured, Gemini is tried once.
+Authentication/configuration errors are surfaced directly. The actual model used
+is saved with the review; a Gemini fallback stays marked stale while Claude is
+the primary model. Failed regeneration preserves the previous review.
+Store keys only in `/etc/portfolio.env` on the Pi, then restart `portfolio`.
 
 **What gets sent.** Only derived figures: percentage changes, allocation
 percentages and percentage-point deltas, contribution pace relative to the
@@ -195,7 +205,7 @@ stronger terms. The restriction is enforced by tests in
 Generation is explicit — it happens when you press the button, never on page
 load. Results are cached per quarter, so a normal visit makes no API call. If
 the underlying figures change afterwards the card says so and offers a
-regenerate. Changing `GEMINI_MODEL` also marks cached reviews as stale; it
+regenerate. Changing the primary model also marks cached reviews as stale; it
 does not send data or regenerate anything automatically.
 
 The prompt instructs the model to use only the supplied figures, calculate
