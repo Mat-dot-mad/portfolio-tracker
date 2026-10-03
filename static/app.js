@@ -494,11 +494,13 @@ function sortGroups(groups) {
             const lastQ = visibleQs[visibleQs.length - 1]?.id;
             const aChange = (a.values[lastQ] || 0) - (a.values[firstQ] || 0);
             const bChange = (b.values[lastQ] || 0) - (b.values[firstQ] || 0);
-            cmp = bChange - aChange;
+            cmp = aChange - bChange;
         } else {
             const qId = parseInt(sortCol);
-            cmp = (b.values[qId] || 0) - (a.values[qId] || 0);
+            cmp = (a.values[qId] || 0) - (b.values[qId] || 0);
         }
+        // Ascending above, direction applied once here — see sortDiffGroups in
+        // compare.js, which had the same double reversal.
         return sortAsc ? cmp : -cmp;
     });
 }

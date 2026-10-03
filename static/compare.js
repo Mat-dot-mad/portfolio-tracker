@@ -173,12 +173,16 @@ function sortDiffGroups(groups) {
         } else if (sortCol === 'account') {
             cmp = a.account.localeCompare(b.account) || a.tags.localeCompare(b.tags);
         } else if (sortCol === 'valA') {
-            cmp = b.valA - a.valA;
+            cmp = a.valA - b.valA;
         } else if (sortCol === 'valB') {
-            cmp = b.valB - a.valB;
+            cmp = a.valB - b.valB;
         } else if (sortCol === 'change') {
-            cmp = Math.abs(b.change) - Math.abs(a.change);
+            cmp = Math.abs(a.change) - Math.abs(b.change);
         }
+        // Every branch above yields ascending order; direction is applied here
+        // and nowhere else. The numeric branches used to compare b to a, so
+        // this line reversed them a second time and the ▼ (largest first)
+        // view listed the smallest movers first.
         return sortAsc ? cmp : -cmp;
     });
 }
