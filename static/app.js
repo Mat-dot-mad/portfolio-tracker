@@ -3,12 +3,6 @@
 
 // ── Helpers ──────────────────────────────────────────
 
-const COLORS = [
-    '#0d6efd', '#198754', '#ffc107', '#dc3545', '#6f42c1',
-    '#0dcaf0', '#fd7e14', '#20c997', '#6610f2', '#d63384',
-    '#0984e3', '#00b894', '#e17055', '#74b9ff', '#a29bfe',
-];
-
 // Percentage-only change label. Compare's formatChange() renders amount +
 // percentage instead — different output, so they stay separate.
 function formatPctChange(current, previous, polarity = 1) {
@@ -212,8 +206,8 @@ function renderMoneyInChart() {
                 {
                     label: 'Tracked investments + cash (excluding PPK)',
                     data: wealthSeries,
-                    borderColor: '#198754',
-                    backgroundColor: 'rgba(25, 135, 84, 0.15)',
+                    borderColor: '#0d6efd',
+                    backgroundColor: 'rgba(13, 110, 253, 0.15)',
                     borderWidth: 2.5,
                     tension: 0.3,
                     fill: '-1',             // fills toward dataset above (net invested)
@@ -267,10 +261,10 @@ function renderTimelineChart() {
                     tension: 0.3,
                 },
                 {
-                    label: 'Mortgage',
+                    label: 'Mortgage',   // a balance, so neutral; see changeClass
                     data: timeline.map(t => -t.mortgage_total),
-                    borderColor: '#dc3545',
-                    backgroundColor: 'rgba(220, 53, 69, 0.1)',
+                    borderColor: '#6c757d',
+                    backgroundColor: 'rgba(108, 117, 125, 0.1)',
                     fill: true,
                     tension: 0.3,
                     borderDash: [5, 5],
@@ -278,7 +272,7 @@ function renderTimelineChart() {
                 {
                     label: 'Net Worth',
                     data: timeline.map(t => t.net_worth),
-                    borderColor: '#198754',
+                    borderColor: cssColor('--bs-emphasis-color'),   // headline total, not a gain
                     borderWidth: 2.5,
                     tension: 0.3,
                     fill: false,
@@ -316,6 +310,10 @@ function renderTreemap(canvasId, dataMap, label) {
     if (!entries.length) return;
 
     const total = entries.reduce((sum, [, v]) => sum + v, 0);
+    // Wrapper accounts (and the PPK tag) keep the colour they have in their
+    // badges and in the retirement planner; see categoryColors in common.js.
+    const colors = categoryColors(entries.map(([key]) => key));
+    const tileColor = (ctx) => colors[ctx.raw?._data?.idx ?? ctx.dataIndex] || colors[0];
 
     new Chart(ctx, {
         type: 'treemap',
@@ -324,11 +322,7 @@ function renderTreemap(canvasId, dataMap, label) {
                 tree: entries.map(([key, value], i) => ({ key, value, idx: i })),
                 key: 'value',
                 groups: ['key'],
-                backgroundColor: (ctx) => {
-                    if (!ctx.raw) return COLORS[0];
-                    const idx = ctx.raw._data?.idx ?? ctx.dataIndex;
-                    return COLORS[idx % COLORS.length];
-                },
+                backgroundColor: tileColor,
                 borderWidth: 2,
                 borderColor: 'rgba(255,255,255,0.6)',
                 spacing: 1,
@@ -337,7 +331,7 @@ function renderTreemap(canvasId, dataMap, label) {
                     align: 'left',
                     position: 'top',
                     font: { size: 12, weight: 'bold' },
-                    color: '#fff',
+                    color: (ctx) => readableTextOn(tileColor(ctx)),
                     formatter: (ctx) => {
                         if (!ctx.raw) return '';
                         const v = ctx.raw.v;

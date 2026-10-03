@@ -25,6 +25,23 @@
     --pt-new: var(--bs-primary-text-emphasis);
 }
 
+/* Identity colours for the account wrappers, the same in every view: badges,
+   treemaps and the retirement planner. Theme-independent, because each is a
+   fill with its own text colour rather than text on the page background.
+   None is red or green, so an account can never read as a gain or a loss. */
+:root {
+    --pt-ike: #0d6efd;
+    --pt-ikem: #6610f2;
+    --pt-ikze: #fd7e14;
+    --pt-ppk: #6f42c1;
+    --pt-taxable: #6c757d;
+}
+
+.badge-ike  { background: var(--pt-ike); }
+.badge-ikem { background: var(--pt-ikem); }
+/* White on this orange measured 2.57:1; black is 8.17:1. */
+.badge-ikze { background: var(--pt-ikze); color: #000; }
+
 .text-positive { color: var(--pt-good); }
 .text-negative { color: var(--pt-bad); }
 

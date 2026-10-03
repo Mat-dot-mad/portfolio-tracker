@@ -262,6 +262,10 @@ function renderForecastChart(summary, assumptions) {
     const p10Data    = [...padNulls(histLen - 1), lastHistNW, ...summary.map(s => s.p10)];
     const p90Data    = [...padNulls(histLen - 1), lastHistNW, ...summary.map(s => s.p90)];
 
+    // Net worth is the headline total, drawn as on the dashboard: the page's
+    // emphasis colour rather than a green that would read as "gain".
+    const ink = cssColor('--bs-emphasis-color');
+
     forecastChart = new Chart(canvas, {
         type: 'line',
         data: {
@@ -271,7 +275,7 @@ function renderForecastChart(summary, assumptions) {
                 {
                     label: 'P10',
                     data: p10Data,
-                    borderColor: 'rgba(25, 135, 84, 0)',
+                    borderColor: withAlpha(ink, 0),
                     pointRadius: 0,
                     fill: false,
                     order: 3,
@@ -280,8 +284,8 @@ function renderForecastChart(summary, assumptions) {
                 {
                     label: 'P10–P90 range',
                     data: p90Data,
-                    borderColor: 'rgba(25, 135, 84, 0)',
-                    backgroundColor: 'rgba(25, 135, 84, 0.15)',
+                    borderColor: withAlpha(ink, 0),
+                    backgroundColor: withAlpha(ink, 0.12),
                     pointRadius: 0,
                     fill: '-1',
                     order: 2,
@@ -290,7 +294,7 @@ function renderForecastChart(summary, assumptions) {
                 {
                     label: 'Median forecast',
                     data: medianData,
-                    borderColor: '#198754',
+                    borderColor: ink,
                     borderDash: [6, 6],
                     borderWidth: 2,
                     pointRadius: 0,
@@ -302,7 +306,7 @@ function renderForecastChart(summary, assumptions) {
                 {
                     label: 'Historical net worth',
                     data: historicalData,
-                    borderColor: '#198754',
+                    borderColor: ink,
                     borderWidth: 2.5,
                     pointRadius: 2,
                     fill: false,

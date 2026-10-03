@@ -216,7 +216,7 @@ function renderResults(d) {
     renderProjectionTable(d);
 
     document.getElementById('chart-note').innerHTML =
-        `<strong class="text-positive">Accessible capital</strong> shows remaining balances after that year's spending, before withdrawal tax. ` +
+        `<strong>Accessible capital</strong> shows remaining balances after that year's spending, before withdrawal tax. ` +
         `Total capital also includes age-locked accounts. Each line is a separate percentile; subtracting their medians does not give median locked capital. ` +
         `Failed runs continue for illustration: later growth does not pay earlier unfunded spending.<br>` +
         `${d.return_source} returns compounding at ` +
@@ -290,10 +290,11 @@ function renderBuckets(d) {
     }
 
     const segments = [
-        { label: 'Taxable — any time', value: b.taxable, color: '#198754' },
-        { label: `IKE — from ${s.ike_access_age}`, value: b.ike, color: '#0d6efd' },
-        { label: `IKZE — from ${s.ikze_access_age}`, value: b.ikze, color: '#fd7e14' },
-        { label: `PPK — from ${s.ppk_access_age}`, value: b.ppk || 0, color: '#6f42c1' },
+        // Same identity colours as the account badges and treemaps.
+        { label: 'Taxable — any time', value: b.taxable, color: cssColor('--pt-taxable') },
+        { label: `IKE — from ${s.ike_access_age}`, value: b.ike, color: cssColor('--pt-ike') },
+        { label: `IKZE — from ${s.ikze_access_age}`, value: b.ikze, color: cssColor('--pt-ikze') },
+        { label: `PPK — from ${s.ppk_access_age}`, value: b.ppk || 0, color: cssColor('--pt-ppk') },
     ];
 
     const bar = document.getElementById('bucket-bar');
@@ -303,6 +304,7 @@ function renderBuckets(d) {
         const el = document.createElement('span');
         el.style.width = `${(seg.value / total) * 100}%`;
         el.style.background = seg.color;
+        el.style.color = readableTextOn(seg.color);
         el.textContent = `${((seg.value / total) * 100).toFixed(0)}%`;
         el.title = `${seg.label}: ${formatPLN(seg.value)}`;
         bar.appendChild(el);
@@ -499,7 +501,9 @@ const milestonesPlugin = {
             const x = xFor(m.age);
             if (x === null) continue;
             ctx.strokeStyle = m.color;
-            ctx.fillStyle = m.color;
+            // Labels in the chart's text colour: small text in the marker
+            // colours fell below 4.5:1 on the dark background.
+            ctx.fillStyle = Chart.defaults.color;
             ctx.beginPath();
             ctx.moveTo(x, chartArea.top);
             ctx.lineTo(x, chartArea.bottom);
@@ -554,12 +558,13 @@ function renderChart(d) {
                   borderDash: [6, 4], pointRadius: 0, fill: false, tension: 0.2, order: 3 },
                 // The line that answers "can I actually pay for my life?".
                 { label: 'Accessible capital (median, before tax)', data: path.map(p => p.reachable_p50),
-                  borderColor: '#198754', borderWidth: 3, pointRadius: 0,
+                  // The headline measure, in the page's emphasis colour.
+                  borderColor: cssColor('--bs-emphasis-color'), borderWidth: 3, pointRadius: 0,
                   fill: false, tension: 0.2, order: 1 },
                 { label: 'Accessible capital (P10, before tax)', data: path.map(p => p.reachable_p10),
                   // Same hue as the median line it belongs to, dotted: the
                   // usual way to draw a percentile. Red is kept for shortfall.
-                  borderColor: '#198754', borderWidth: 2, borderDash: [3, 3],
+                  borderColor: cssColor('--bs-emphasis-color'), borderWidth: 2, borderDash: [3, 3],
                   pointRadius: 0, fill: false, tension: 0.2, order: 2 },
                 // Only drawn when something actually fails, so a healthy plan
                 // is not cluttered by a flat zero line.
@@ -587,9 +592,11 @@ function renderChart(d) {
                     shortfallAge: d.median_first_shortfall_age,
                     markers: [
                         { age: retireAge, label: 'retire', color: 'rgba(108,117,125,0.85)' },
-                        { age: Number(s.ike_access_age), label: 'IKE', color: 'rgba(13,110,253,0.7)' },
-                        { age: Number(s.ikze_access_age), label: 'IKZE', color: 'rgba(253,126,20,0.7)' },
-                        { age: Number(s.zus_start_age), label: 'ZUS', color: 'rgba(25,135,84,0.7)' },
+                        // Unlocks take their wrapper's identity colour; ZUS
+                        // is an event, like retiring, so it stays neutral.
+                        { age: Number(s.ike_access_age), label: 'IKE', color: cssColor('--pt-ike') },
+                        { age: Number(s.ikze_access_age), label: 'IKZE', color: cssColor('--pt-ikze') },
+                        { age: Number(s.zus_start_age), label: 'ZUS', color: 'rgba(108,117,125,0.85)' },
                     ],
                 },
                 legend: { position: 'bottom', labels: { filter: i => i.text !== 'P10' } },
