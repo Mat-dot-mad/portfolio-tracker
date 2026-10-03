@@ -25,6 +25,12 @@ let planData = null;
 let baselineData = null;
 let savedScenarios = [];
 let selectedScenarioId = null;
+// The form as it stood right after a saved plan was loaded into it. Comparing
+// the live form to this snapshot is what makes the draft "dirty". Both sides
+// pass through the same fillForm -> readForm path, so string/number and
+// rounding differences between the API and the inputs cannot cause a false
+// "unsaved" state. Angular calls the same idea pristine vs dirty.
+let savedFormSnapshot = null;
 let retirementChart = null;
 let debounceTimer = null;
 // Requests can overlap while dragging; only the newest may be applied, or a
@@ -702,7 +708,8 @@ function setBusy(busy) {
 function scheduleUpdate() {
     clearTimeout(debounceTimer);
     ++requestSeq; // invalidate in-flight results immediately, before debounce
-    setStatus('Unsaved changes');
+    setStatus('');
+    refreshDraftState();
     debounceTimer = setTimeout(runUpdate, DEBOUNCE_MS);
 }
 
@@ -722,7 +729,7 @@ async function runUpdate() {
         renderResults(data);
         refreshLeverLabels();
         renderScenarioComparison();
-        setStatus('Draft calculated · baseline unchanged', 'text-success');
+        setStatus('');
     } catch (err) {
         if (seq !== requestSeq) return;
         setStatus(err.message, 'text-danger');
@@ -813,6 +820,7 @@ async function loadSelectedScenario() {
     document.getElementById('delete-scenario').disabled = !scenario;
     fillForm(scenario ? scenario.settings : baselineData.settings, baselineData);
     refreshLeverLabels();
+    markFormSaved();
     await runUpdate();
 }
 
@@ -830,9 +838,56 @@ async function saveScenario(asNew = false) {
         });
         selectedScenarioId = result.id;
         await refreshScenarios();
+        markFormSaved();
         await runUpdate();
         setStatus('Scenario saved · baseline unchanged', 'text-success');
     } catch (err) { setStatus(err.message, 'text-danger'); }
+}
+
+// ── Unsaved-changes state ───────────────────────────
+
+function selectedPlanName() {
+    const scenario = savedScenarios.find(s => s.id === selectedScenarioId);
+    return scenario ? `“${scenario.name}”` : 'your saved baseline';
+}
+
+function markFormSaved() {
+    savedFormSnapshot = JSON.stringify(readForm());
+    refreshDraftState();
+}
+
+function hasUnsavedChanges() {
+    return savedFormSnapshot !== null && JSON.stringify(readForm()) !== savedFormSnapshot;
+}
+
+function refreshDraftState() {
+    const bar = document.getElementById('draft-bar');
+    const note = document.getElementById('draft-clean-note');
+    if (!bar || !note) return;
+    const dirty = hasUnsavedChanges();
+    bar.classList.toggle('d-none', !dirty);
+    note.classList.toggle('d-none', dirty);
+    document.getElementById('draft-plan-name').textContent = selectedPlanName();
+    document.getElementById('draft-clean-plan').textContent = selectedPlanName();
+    // Saving over a named scenario is unambiguous, so it is one click. The
+    // baseline is your real plan: overwriting it stays a deliberate action in
+    // the Saved plans section, and the default offer is a new scenario. The
+    // ellipsis signals that the button asks for more input before completing.
+    document.getElementById('draft-save').textContent =
+        selectedScenarioId ? 'Save changes' : 'Save as scenario…';
+}
+
+async function saveDraft() {
+    if (selectedScenarioId) return saveScenario(false);
+    // Baseline draft: a scenario needs a name, and the name field lives beside
+    // the side-by-side comparison — the right place to review before saving.
+    const panel = document.getElementById('scenario-panel');
+    panel.open = true;
+    panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // The focused name field beside "Save scenario" and "Update baseline" is
+    // the instruction; a status message here would race the pending
+    // recalculation, which overwrites the status line when it finishes.
+    document.getElementById('scenario-name').focus({ preventScroll: true });
 }
 
 async function updateBaseline() {
@@ -883,6 +938,7 @@ async function loadRetirement() {
     buildLevers();
     fillForm(data.settings, data);
     refreshLeverLabels();
+    markFormSaved();
     renderChart(data);          // sets chartUsesLogScale, read by renderResults
     renderResults(data);
 
@@ -897,5 +953,14 @@ async function loadRetirement() {
         }
     }
 }
+
+// Covers closing the tab, reloading and the nav links. Browsers show their own
+// generic wording; a custom message is no longer displayed by any of them.
+window.addEventListener('beforeunload', event => {
+    if (hasUnsavedChanges()) {
+        event.preventDefault();
+        event.returnValue = '';
+    }
+});
 
 loadRetirement();
