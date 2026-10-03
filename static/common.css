@@ -16,12 +16,19 @@
 [data-bs-theme="light"] {
     --pt-good: var(--bs-success);
     --pt-bad: var(--bs-danger);
+    --pt-new: var(--bs-primary);
 }
 
 [data-bs-theme="dark"] {
     --pt-good: var(--bs-success-text-emphasis);
     --pt-bad: var(--bs-danger-text-emphasis);
+    --pt-new: var(--bs-primary-text-emphasis);
 }
 
 .text-positive { color: var(--pt-good); }
 .text-negative { color: var(--pt-bad); }
+
+/* Buying a new position or selling one out is neither a gain nor a loss, so
+   neither uses the good/bad colours. "Sold" is muted; "new" is the accent. */
+.text-new { color: var(--pt-new); }
+.text-sold { color: var(--bs-secondary-color); }

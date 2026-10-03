@@ -53,6 +53,19 @@ function syncThemeButton() {
     }
 }
 
+// ── Gain / loss colour ──────────────────────────────
+
+// Red and green mean "bad for you" and "good for you", never just "down" and
+// "up". Each figure declares its polarity — dashboards call this metric (or
+// KPI) polarity:
+//    1  higher is better: assets, net worth
+//   -1  lower is better: debt, so paying down the mortgage is green
+//    0  neither: cash moving between your own accounts
+function changeClass(delta, polarity = 1) {
+    if (!polarity || !delta) return '';
+    return delta * polarity > 0 ? 'text-positive' : 'text-negative';
+}
+
 // A CSS custom property as resolved for the current theme. Lets canvas
 // drawing — which CSS cannot reach — use the same tokens as the markup,
 // e.g. cssColor('--pt-bad').

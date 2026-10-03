@@ -11,11 +11,11 @@ const COLORS = [
 
 // Percentage-only change label. Compare's formatChange() renders amount +
 // percentage instead — different output, so they stay separate.
-function formatPctChange(current, previous) {
+function formatPctChange(current, previous, polarity = 1) {
     if (!previous || previous === 0) return '';
     const pct = ((current - previous) / Math.abs(previous)) * 100;
     const sign = pct >= 0 ? '+' : '';
-    const cls = pct >= 0 ? 'text-positive' : 'text-negative';
+    const cls = changeClass(pct, polarity);
     return `<span class="${cls}">${sign}${pct.toFixed(1)}%</span>`;
 }
 
@@ -103,7 +103,8 @@ function renderSummaryCards() {
         {
             label: `Cash (${quarter})`,
             value: balances.cash === 'missing' ? 'Not recorded' : formatPLN(d.cash_total),
-            change: balances.cash !== 'missing' && tl.length >= 2 ? formatPctChange(d.cash_total, prevCash) : '',
+            // Cash falling usually means it was invested, not lost: neutral.
+            change: balances.cash !== 'missing' && tl.length >= 2 ? formatPctChange(d.cash_total, prevCash, 0) : '',
             color: '',
         },
         {
@@ -116,14 +117,16 @@ function renderSummaryCards() {
         {
             label: `Mortgage (${quarter})`,
             value: balances.mortgage === 'missing' ? 'Not recorded' : formatPLN(d.mortgage_total),
-            change: balances.mortgage !== 'missing' && tl.length >= 2 ? formatPctChange(d.mortgage_total, prevMortgage) : '',
-            color: 'text-negative',
+            // Debt: a decrease is good. The balance itself is not coloured —
+            // a red figure read as an alarm even while it was shrinking.
+            change: balances.mortgage !== 'missing' && tl.length >= 2 ? formatPctChange(d.mortgage_total, prevMortgage, -1) : '',
+            color: '',
         },
         {
             label: `Net Worth (${hasMissing ? "recorded inputs" : quarter})`,
             value: formatPLN(d.net_worth),
             change: comparableNetWorth && tl.length >= 2 ? formatPctChange(d.net_worth, prevNet) : '',
-            color: d.net_worth >= 0 ? 'text-positive' : 'text-negative',
+            color: '',
         },
     ];
 
@@ -527,13 +530,15 @@ function computeChange(values, visibleQs) {
     const lastVal = values[visibleQs[visibleQs.length - 1].id] || 0;
     const diff = lastVal - firstVal;
     let pctHtml = '';
-    if (firstVal > 0) {
+    if (firstVal > 0 && lastVal === 0) {
+        // Selling out is not a 100% loss; matches Compare's "(sold)".
+        pctHtml = '<span class="text-sold">sold</span>';
+    } else if (firstVal > 0) {
         const pct = (diff / firstVal) * 100;
         const sign = pct >= 0 ? '+' : '';
-        const cls = pct >= 0 ? 'text-positive' : 'text-negative';
-        pctHtml = `<span class="${cls}">${sign}${pct.toFixed(1)}%</span>`;
+        pctHtml = `<span class="${changeClass(pct)}">${sign}${pct.toFixed(1)}%</span>`;
     } else if (lastVal > 0) {
-        pctHtml = '<span class="text-positive">new</span>';
+        pctHtml = '<span class="text-new">new</span>';
     }
     return { pln: diff, pctHtml };
 }

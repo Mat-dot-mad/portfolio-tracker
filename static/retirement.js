@@ -557,7 +557,9 @@ function renderChart(d) {
                   borderColor: '#198754', borderWidth: 3, pointRadius: 0,
                   fill: false, tension: 0.2, order: 1 },
                 { label: 'Accessible capital (P10, before tax)', data: path.map(p => p.reachable_p10),
-                  borderColor: '#dc3545', borderWidth: 2, borderDash: [3, 3],
+                  // Same hue as the median line it belongs to, dotted: the
+                  // usual way to draw a percentile. Red is kept for shortfall.
+                  borderColor: '#198754', borderWidth: 2, borderDash: [3, 3],
                   pointRadius: 0, fill: false, tension: 0.2, order: 2 },
                 // Only drawn when something actually fails, so a healthy plan
                 // is not cluttered by a flat zero line.
@@ -565,8 +567,8 @@ function renderChart(d) {
                     label: 'Runs already short',
                     data: path.map(p => p.failed_share),
                     yAxisID: 'y1',
-                    borderColor: 'rgba(220,53,69,0.65)', borderWidth: 1,
-                    backgroundColor: 'rgba(220,53,69,0.13)',
+                    borderColor: withAlpha(cssColor('--pt-bad'), 0.65), borderWidth: 1,
+                    backgroundColor: withAlpha(cssColor('--pt-bad'), 0.13),
                     pointRadius: 0, fill: 'origin', tension: 0.2, order: 6,
                 }] : []),
             ],
