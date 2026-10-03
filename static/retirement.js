@@ -25,6 +25,12 @@ let planData = null;
 let baselineData = null;
 let savedScenarios = [];
 let selectedScenarioId = null;
+// The form as it stood right after a saved plan was loaded into it. Comparing
+// the live form to this snapshot is what makes the draft "dirty". Both sides
+// pass through the same fillForm -> readForm path, so string/number and
+// rounding differences between the API and the inputs cannot cause a false
+// "unsaved" state. Angular calls the same idea pristine vs dirty.
+let savedFormSnapshot = null;
 let retirementChart = null;
 let debounceTimer = null;
 // Requests can overlap while dragging; only the newest may be applied, or a
@@ -210,7 +216,7 @@ function renderResults(d) {
     renderProjectionTable(d);
 
     document.getElementById('chart-note').innerHTML =
-        `<strong class="text-positive">Accessible capital</strong> shows remaining balances after that year's spending, before withdrawal tax. ` +
+        `<strong>Accessible capital</strong> shows remaining balances after that year's spending, before withdrawal tax. ` +
         `Total capital also includes age-locked accounts. Each line is a separate percentile; subtracting their medians does not give median locked capital. ` +
         `Failed runs continue for illustration: later growth does not pay earlier unfunded spending.<br>` +
         `${d.return_source} returns compounding at ` +
@@ -284,10 +290,11 @@ function renderBuckets(d) {
     }
 
     const segments = [
-        { label: 'Taxable — any time', value: b.taxable, color: '#198754' },
-        { label: `IKE — from ${s.ike_access_age}`, value: b.ike, color: '#0d6efd' },
-        { label: `IKZE — from ${s.ikze_access_age}`, value: b.ikze, color: '#fd7e14' },
-        { label: `PPK — from ${s.ppk_access_age}`, value: b.ppk || 0, color: '#6f42c1' },
+        // Same identity colours as the account badges and treemaps.
+        { label: 'Taxable — any time', value: b.taxable, color: cssColor('--pt-taxable') },
+        { label: `IKE — from ${s.ike_access_age}`, value: b.ike, color: cssColor('--pt-ike') },
+        { label: `IKZE — from ${s.ikze_access_age}`, value: b.ikze, color: cssColor('--pt-ikze') },
+        { label: `PPK — from ${s.ppk_access_age}`, value: b.ppk || 0, color: cssColor('--pt-ppk') },
     ];
 
     const bar = document.getElementById('bucket-bar');
@@ -297,6 +304,7 @@ function renderBuckets(d) {
         const el = document.createElement('span');
         el.style.width = `${(seg.value / total) * 100}%`;
         el.style.background = seg.color;
+        el.style.color = readableTextOn(seg.color);
         el.textContent = `${((seg.value / total) * 100).toFixed(0)}%`;
         el.title = `${seg.label}: ${formatPLN(seg.value)}`;
         bar.appendChild(el);
@@ -451,13 +459,16 @@ const milestonesPlugin = {
             return i === -1 ? null : scales.x.getPixelForValue(i);
         };
 
+        // Read per draw, so a redraw after a theme switch picks up the
+        // dark-mode red; canvas text cannot use the .text-negative class.
+        const bad = cssColor('--pt-bad');
         const from = xFor(opts.retireAge);
         const to = xFor(Math.min(opts.ikeAge, opts.ppkAge));
         if (from !== null && to !== null && to > from) {
             ctx.save();
-            ctx.fillStyle = 'rgba(220, 53, 69, 0.10)';
+            ctx.fillStyle = withAlpha(bad, 0.10);
             ctx.fillRect(from, chartArea.top, to - from, chartArea.bottom - chartArea.top);
-            ctx.fillStyle = 'rgba(220, 53, 69, 0.85)';
+            ctx.fillStyle = bad;
             ctx.font = '11px sans-serif';
             ctx.fillText('bridge', from + 4, chartArea.top + 13);
             ctx.restore();
@@ -469,13 +480,13 @@ const milestonesPlugin = {
             const sx = xFor(opts.shortfallAge);
             if (sx !== null) {
                 ctx.save();
-                ctx.strokeStyle = 'rgba(220, 53, 69, 0.9)';
+                ctx.strokeStyle = bad;
                 ctx.lineWidth = 2;
                 ctx.beginPath();
                 ctx.moveTo(sx, chartArea.top);
                 ctx.lineTo(sx, chartArea.bottom);
                 ctx.stroke();
-                ctx.fillStyle = 'rgba(220, 53, 69, 0.95)';
+                ctx.fillStyle = bad;
                 ctx.font = 'bold 11px sans-serif';
                 ctx.fillText(`median first shortfall: ${opts.shortfallAge}`, sx + 5, chartArea.top + 28);
                 ctx.restore();
@@ -490,7 +501,9 @@ const milestonesPlugin = {
             const x = xFor(m.age);
             if (x === null) continue;
             ctx.strokeStyle = m.color;
-            ctx.fillStyle = m.color;
+            // Labels in the chart's text colour: small text in the marker
+            // colours fell below 4.5:1 on the dark background.
+            ctx.fillStyle = Chart.defaults.color;
             ctx.beginPath();
             ctx.moveTo(x, chartArea.top);
             ctx.lineTo(x, chartArea.bottom);
@@ -545,10 +558,13 @@ function renderChart(d) {
                   borderDash: [6, 4], pointRadius: 0, fill: false, tension: 0.2, order: 3 },
                 // The line that answers "can I actually pay for my life?".
                 { label: 'Accessible capital (median, before tax)', data: path.map(p => p.reachable_p50),
-                  borderColor: '#198754', borderWidth: 3, pointRadius: 0,
+                  // The headline measure, in the page's emphasis colour.
+                  borderColor: cssColor('--bs-emphasis-color'), borderWidth: 3, pointRadius: 0,
                   fill: false, tension: 0.2, order: 1 },
                 { label: 'Accessible capital (P10, before tax)', data: path.map(p => p.reachable_p10),
-                  borderColor: '#dc3545', borderWidth: 2, borderDash: [3, 3],
+                  // Same hue as the median line it belongs to, dotted: the
+                  // usual way to draw a percentile. Red is kept for shortfall.
+                  borderColor: cssColor('--bs-emphasis-color'), borderWidth: 2, borderDash: [3, 3],
                   pointRadius: 0, fill: false, tension: 0.2, order: 2 },
                 // Only drawn when something actually fails, so a healthy plan
                 // is not cluttered by a flat zero line.
@@ -556,8 +572,8 @@ function renderChart(d) {
                     label: 'Runs already short',
                     data: path.map(p => p.failed_share),
                     yAxisID: 'y1',
-                    borderColor: 'rgba(220,53,69,0.65)', borderWidth: 1,
-                    backgroundColor: 'rgba(220,53,69,0.13)',
+                    borderColor: withAlpha(cssColor('--pt-bad'), 0.65), borderWidth: 1,
+                    backgroundColor: withAlpha(cssColor('--pt-bad'), 0.13),
                     pointRadius: 0, fill: 'origin', tension: 0.2, order: 6,
                 }] : []),
             ],
@@ -576,9 +592,11 @@ function renderChart(d) {
                     shortfallAge: d.median_first_shortfall_age,
                     markers: [
                         { age: retireAge, label: 'retire', color: 'rgba(108,117,125,0.85)' },
-                        { age: Number(s.ike_access_age), label: 'IKE', color: 'rgba(13,110,253,0.7)' },
-                        { age: Number(s.ikze_access_age), label: 'IKZE', color: 'rgba(253,126,20,0.7)' },
-                        { age: Number(s.zus_start_age), label: 'ZUS', color: 'rgba(25,135,84,0.7)' },
+                        // Unlocks take their wrapper's identity colour; ZUS
+                        // is an event, like retiring, so it stays neutral.
+                        { age: Number(s.ike_access_age), label: 'IKE', color: cssColor('--pt-ike') },
+                        { age: Number(s.ikze_access_age), label: 'IKZE', color: cssColor('--pt-ikze') },
+                        { age: Number(s.zus_start_age), label: 'ZUS', color: 'rgba(108,117,125,0.85)' },
                     ],
                 },
                 legend: { position: 'bottom', labels: { filter: i => i.text !== 'P10' } },
@@ -702,7 +720,8 @@ function setBusy(busy) {
 function scheduleUpdate() {
     clearTimeout(debounceTimer);
     ++requestSeq; // invalidate in-flight results immediately, before debounce
-    setStatus('Unsaved changes');
+    setStatus('');
+    refreshDraftState();
     debounceTimer = setTimeout(runUpdate, DEBOUNCE_MS);
 }
 
@@ -722,7 +741,7 @@ async function runUpdate() {
         renderResults(data);
         refreshLeverLabels();
         renderScenarioComparison();
-        setStatus('Draft calculated · baseline unchanged', 'text-success');
+        setStatus('');
     } catch (err) {
         if (seq !== requestSeq) return;
         setStatus(err.message, 'text-danger');
@@ -813,6 +832,7 @@ async function loadSelectedScenario() {
     document.getElementById('delete-scenario').disabled = !scenario;
     fillForm(scenario ? scenario.settings : baselineData.settings, baselineData);
     refreshLeverLabels();
+    markFormSaved();
     await runUpdate();
 }
 
@@ -830,9 +850,56 @@ async function saveScenario(asNew = false) {
         });
         selectedScenarioId = result.id;
         await refreshScenarios();
+        markFormSaved();
         await runUpdate();
         setStatus('Scenario saved · baseline unchanged', 'text-success');
     } catch (err) { setStatus(err.message, 'text-danger'); }
+}
+
+// ── Unsaved-changes state ───────────────────────────
+
+function selectedPlanName() {
+    const scenario = savedScenarios.find(s => s.id === selectedScenarioId);
+    return scenario ? `“${scenario.name}”` : 'your saved baseline';
+}
+
+function markFormSaved() {
+    savedFormSnapshot = JSON.stringify(readForm());
+    refreshDraftState();
+}
+
+function hasUnsavedChanges() {
+    return savedFormSnapshot !== null && JSON.stringify(readForm()) !== savedFormSnapshot;
+}
+
+function refreshDraftState() {
+    const bar = document.getElementById('draft-bar');
+    const note = document.getElementById('draft-clean-note');
+    if (!bar || !note) return;
+    const dirty = hasUnsavedChanges();
+    bar.classList.toggle('d-none', !dirty);
+    note.classList.toggle('d-none', dirty);
+    document.getElementById('draft-plan-name').textContent = selectedPlanName();
+    document.getElementById('draft-clean-plan').textContent = selectedPlanName();
+    // Saving over a named scenario is unambiguous, so it is one click. The
+    // baseline is your real plan: overwriting it stays a deliberate action in
+    // the Saved plans section, and the default offer is a new scenario. The
+    // ellipsis signals that the button asks for more input before completing.
+    document.getElementById('draft-save').textContent =
+        selectedScenarioId ? 'Save changes' : 'Save as scenario…';
+}
+
+async function saveDraft() {
+    if (selectedScenarioId) return saveScenario(false);
+    // Baseline draft: a scenario needs a name, and the name field lives beside
+    // the side-by-side comparison — the right place to review before saving.
+    const panel = document.getElementById('scenario-panel');
+    panel.open = true;
+    panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // The focused name field beside "Save scenario" and "Update baseline" is
+    // the instruction; a status message here would race the pending
+    // recalculation, which overwrites the status line when it finishes.
+    document.getElementById('scenario-name').focus({ preventScroll: true });
 }
 
 async function updateBaseline() {
@@ -883,8 +950,12 @@ async function loadRetirement() {
     buildLevers();
     fillForm(data.settings, data);
     refreshLeverLabels();
+    markFormSaved();
     renderChart(data);          // sets chartUsesLogScale, read by renderResults
     renderResults(data);
+    // loadRetirement can run again (baseline update, reset); registering the
+    // same function twice is a no-op, so redraws cannot stack.
+    window.addEventListener('themechange', redrawChartsForTheme);
 
     await refreshScenarios();
     renderScenarioComparison();
@@ -897,5 +968,19 @@ async function loadRetirement() {
         }
     }
 }
+
+// Charts take their colours when created; see applyChartTheme in common.js.
+function redrawChartsForTheme() {
+    if (planData && document.getElementById('retirement-chart')) renderChart(planData);
+}
+
+// Covers closing the tab, reloading and the nav links. Browsers show their own
+// generic wording; a custom message is no longer displayed by any of them.
+window.addEventListener('beforeunload', event => {
+    if (hasUnsavedChanges()) {
+        event.preventDefault();
+        event.returnValue = '';
+    }
+});
 
 loadRetirement();

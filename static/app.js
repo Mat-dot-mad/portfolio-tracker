@@ -3,19 +3,13 @@
 
 // ── Helpers ──────────────────────────────────────────
 
-const COLORS = [
-    '#0d6efd', '#198754', '#ffc107', '#dc3545', '#6f42c1',
-    '#0dcaf0', '#fd7e14', '#20c997', '#6610f2', '#d63384',
-    '#0984e3', '#00b894', '#e17055', '#74b9ff', '#a29bfe',
-];
-
 // Percentage-only change label. Compare's formatChange() renders amount +
 // percentage instead — different output, so they stay separate.
-function formatPctChange(current, previous) {
+function formatPctChange(current, previous, polarity = 1) {
     if (!previous || previous === 0) return '';
     const pct = ((current - previous) / Math.abs(previous)) * 100;
     const sign = pct >= 0 ? '+' : '';
-    const cls = pct >= 0 ? 'text-positive' : 'text-negative';
+    const cls = changeClass(pct, polarity);
     return `<span class="${cls}">${sign}${pct.toFixed(1)}%</span>`;
 }
 
@@ -50,6 +44,22 @@ async function loadDashboard() {
     renderMoneyInChart();
     loadCommentary();   // async, never blocks the dashboard
     initBreakdownTable();
+    renderTreemap('chartTags', dashboardData.by_tags, 'Tags');
+    renderTreemap('chartAccount', dashboardData.by_account, 'Account');
+    window.addEventListener('themechange', redrawChartsForTheme);
+}
+
+// Charts take their colours when created; see applyChartTheme in common.js.
+// The timeline and treemaps are otherwise drawn once and never destroyed, so
+// destroy them here before redrawing onto the same canvases.
+function redrawChartsForTheme() {
+    if (!dashboardData || !document.getElementById('chartTimeline')) return;
+    for (const id of ['chartTimeline', 'chartTags', 'chartAccount']) {
+        const existing = Chart.getChart(id);
+        if (existing) existing.destroy();
+    }
+    renderTimelineChart();
+    renderMoneyInChart();      // destroys its own previous instance
     renderTreemap('chartTags', dashboardData.by_tags, 'Tags');
     renderTreemap('chartAccount', dashboardData.by_account, 'Account');
 }
@@ -87,7 +97,8 @@ function renderSummaryCards() {
         {
             label: `Cash (${quarter})`,
             value: balances.cash === 'missing' ? 'Not recorded' : formatPLN(d.cash_total),
-            change: balances.cash !== 'missing' && tl.length >= 2 ? formatPctChange(d.cash_total, prevCash) : '',
+            // Cash falling usually means it was invested, not lost: neutral.
+            change: balances.cash !== 'missing' && tl.length >= 2 ? formatPctChange(d.cash_total, prevCash, 0) : '',
             color: '',
         },
         {
@@ -100,14 +111,16 @@ function renderSummaryCards() {
         {
             label: `Mortgage (${quarter})`,
             value: balances.mortgage === 'missing' ? 'Not recorded' : formatPLN(d.mortgage_total),
-            change: balances.mortgage !== 'missing' && tl.length >= 2 ? formatPctChange(d.mortgage_total, prevMortgage) : '',
-            color: 'text-negative',
+            // Debt: a decrease is good. The balance itself is not coloured —
+            // a red figure read as an alarm even while it was shrinking.
+            change: balances.mortgage !== 'missing' && tl.length >= 2 ? formatPctChange(d.mortgage_total, prevMortgage, -1) : '',
+            color: '',
         },
         {
             label: `Net Worth (${hasMissing ? "recorded inputs" : quarter})`,
             value: formatPLN(d.net_worth),
             change: comparableNetWorth && tl.length >= 2 ? formatPctChange(d.net_worth, prevNet) : '',
-            color: d.net_worth >= 0 ? 'text-positive' : 'text-negative',
+            color: '',
         },
     ];
 
@@ -193,8 +206,8 @@ function renderMoneyInChart() {
                 {
                     label: 'Tracked investments + cash (excluding PPK)',
                     data: wealthSeries,
-                    borderColor: '#198754',
-                    backgroundColor: 'rgba(25, 135, 84, 0.15)',
+                    borderColor: '#0d6efd',
+                    backgroundColor: 'rgba(13, 110, 253, 0.15)',
                     borderWidth: 2.5,
                     tension: 0.3,
                     fill: '-1',             // fills toward dataset above (net invested)
@@ -248,10 +261,10 @@ function renderTimelineChart() {
                     tension: 0.3,
                 },
                 {
-                    label: 'Mortgage',
+                    label: 'Mortgage',   // a balance, so neutral; see changeClass
                     data: timeline.map(t => -t.mortgage_total),
-                    borderColor: '#dc3545',
-                    backgroundColor: 'rgba(220, 53, 69, 0.1)',
+                    borderColor: '#6c757d',
+                    backgroundColor: 'rgba(108, 117, 125, 0.1)',
                     fill: true,
                     tension: 0.3,
                     borderDash: [5, 5],
@@ -259,7 +272,7 @@ function renderTimelineChart() {
                 {
                     label: 'Net Worth',
                     data: timeline.map(t => t.net_worth),
-                    borderColor: '#198754',
+                    borderColor: cssColor('--bs-emphasis-color'),   // headline total, not a gain
                     borderWidth: 2.5,
                     tension: 0.3,
                     fill: false,
@@ -297,6 +310,10 @@ function renderTreemap(canvasId, dataMap, label) {
     if (!entries.length) return;
 
     const total = entries.reduce((sum, [, v]) => sum + v, 0);
+    // Wrapper accounts (and the PPK tag) keep the colour they have in their
+    // badges and in the retirement planner; see categoryColors in common.js.
+    const colors = categoryColors(entries.map(([key]) => key));
+    const tileColor = (ctx) => colors[ctx.raw?._data?.idx ?? ctx.dataIndex] || colors[0];
 
     new Chart(ctx, {
         type: 'treemap',
@@ -305,11 +322,7 @@ function renderTreemap(canvasId, dataMap, label) {
                 tree: entries.map(([key, value], i) => ({ key, value, idx: i })),
                 key: 'value',
                 groups: ['key'],
-                backgroundColor: (ctx) => {
-                    if (!ctx.raw) return COLORS[0];
-                    const idx = ctx.raw._data?.idx ?? ctx.dataIndex;
-                    return COLORS[idx % COLORS.length];
-                },
+                backgroundColor: tileColor,
                 borderWidth: 2,
                 borderColor: 'rgba(255,255,255,0.6)',
                 spacing: 1,
@@ -318,7 +331,7 @@ function renderTreemap(canvasId, dataMap, label) {
                     align: 'left',
                     position: 'top',
                     font: { size: 12, weight: 'bold' },
-                    color: '#fff',
+                    color: (ctx) => readableTextOn(tileColor(ctx)),
                     formatter: (ctx) => {
                         if (!ctx.raw) return '';
                         const v = ctx.raw.v;
@@ -494,11 +507,13 @@ function sortGroups(groups) {
             const lastQ = visibleQs[visibleQs.length - 1]?.id;
             const aChange = (a.values[lastQ] || 0) - (a.values[firstQ] || 0);
             const bChange = (b.values[lastQ] || 0) - (b.values[firstQ] || 0);
-            cmp = bChange - aChange;
+            cmp = aChange - bChange;
         } else {
             const qId = parseInt(sortCol);
-            cmp = (b.values[qId] || 0) - (a.values[qId] || 0);
+            cmp = (a.values[qId] || 0) - (b.values[qId] || 0);
         }
+        // Ascending above, direction applied once here — see sortDiffGroups in
+        // compare.js, which had the same double reversal.
         return sortAsc ? cmp : -cmp;
     });
 }
@@ -509,13 +524,15 @@ function computeChange(values, visibleQs) {
     const lastVal = values[visibleQs[visibleQs.length - 1].id] || 0;
     const diff = lastVal - firstVal;
     let pctHtml = '';
-    if (firstVal > 0) {
+    if (firstVal > 0 && lastVal === 0) {
+        // Selling out is not a 100% loss; matches Compare's "(sold)".
+        pctHtml = '<span class="text-sold">sold</span>';
+    } else if (firstVal > 0) {
         const pct = (diff / firstVal) * 100;
         const sign = pct >= 0 ? '+' : '';
-        const cls = pct >= 0 ? 'text-positive' : 'text-negative';
-        pctHtml = `<span class="${cls}">${sign}${pct.toFixed(1)}%</span>`;
+        pctHtml = `<span class="${changeClass(pct)}">${sign}${pct.toFixed(1)}%</span>`;
     } else if (lastVal > 0) {
-        pctHtml = '<span class="text-positive">new</span>';
+        pctHtml = '<span class="text-new">new</span>';
     }
     return { pln: diff, pctHtml };
 }

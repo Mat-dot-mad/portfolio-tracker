@@ -1,0 +1,51 @@
+/* Styles shared by every page. Page-specific styles stay in each template.
+
+   Design tokens, in two layers. Bootstrap's variables (--bs-success, …) are
+   the primitive layer: raw colours. The --pt-* variables below are the
+   semantic layer: they name a meaning ("good for you") rather than a hue, and
+   each theme maps the meaning to whichever primitive is legible there.
+
+   Why not use Bootstrap's own --bs-success-text-emphasis everywhere? In light
+   mode it is #0a3622, a near-black green that no longer reads as "green" at
+   small sizes. So light mode keeps the standard hues (4.53:1 on white, a pass)
+   and dark mode switches to Bootstrap's dark-mode text colours, which measure
+   6.6:1 and 6.1:1 on the dark card background where the standard hues
+   measured 3.4:1 and failed WCAG AA's 4.5:1 for normal-size text. */
+
+:root,
+[data-bs-theme="light"] {
+    --pt-good: var(--bs-success);
+    --pt-bad: var(--bs-danger);
+    --pt-new: var(--bs-primary);
+}
+
+[data-bs-theme="dark"] {
+    --pt-good: var(--bs-success-text-emphasis);
+    --pt-bad: var(--bs-danger-text-emphasis);
+    --pt-new: var(--bs-primary-text-emphasis);
+}
+
+/* Identity colours for the account wrappers, the same in every view: badges,
+   treemaps and the retirement planner. Theme-independent, because each is a
+   fill with its own text colour rather than text on the page background.
+   None is red or green, so an account can never read as a gain or a loss. */
+:root {
+    --pt-ike: #0d6efd;
+    --pt-ikem: #6610f2;
+    --pt-ikze: #fd7e14;
+    --pt-ppk: #6f42c1;
+    --pt-taxable: #6c757d;
+}
+
+.badge-ike  { background: var(--pt-ike); }
+.badge-ikem { background: var(--pt-ikem); }
+/* White on this orange measured 2.57:1; black is 8.17:1. */
+.badge-ikze { background: var(--pt-ikze); color: #000; }
+
+.text-positive { color: var(--pt-good); }
+.text-negative { color: var(--pt-bad); }
+
+/* Buying a new position or selling one out is neither a gain nor a loss, so
+   neither uses the good/bad colours. "Sold" is muted; "new" is the accent. */
+.text-new { color: var(--pt-new); }
+.text-sold { color: var(--bs-secondary-color); }

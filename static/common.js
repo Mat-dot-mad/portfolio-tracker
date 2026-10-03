@@ -53,12 +53,89 @@ function syncThemeButton() {
     }
 }
 
+// ── Gain / loss colour ──────────────────────────────
+
+// Red and green mean "bad for you" and "good for you", never just "down" and
+// "up". Each figure declares its polarity — dashboards call this metric (or
+// KPI) polarity:
+//    1  higher is better: assets, net worth
+//   -1  lower is better: debt, so paying down the mortgage is green
+//    0  neither: cash moving between your own accounts
+function changeClass(delta, polarity = 1) {
+    if (!polarity || !delta) return '';
+    return delta * polarity > 0 ? 'text-positive' : 'text-negative';
+}
+
+// A CSS custom property as resolved for the current theme. Lets canvas
+// drawing — which CSS cannot reach — use the same tokens as the markup,
+// e.g. cssColor('--pt-bad').
+function cssColor(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+// The same colour at a given opacity, for chart fills. Accepts the #rrggbb and
+// rgb()/rgba() forms Bootstrap's tokens resolve to.
+function withAlpha(color, alpha) {
+    // #rgb (Bootstrap writes --bs-emphasis-color as #000/#fff) -> #rrggbb.
+    if (/^#[0-9a-f]{3}$/i.test(color)) color = '#' + [...color.slice(1)].map(c => c + c).join('');
+    const hex = color.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+    const [r, g, b] = hex
+        ? hex.slice(1).map(h => parseInt(h, 16))
+        : color.match(/[\d.]+/g).slice(0, 3).map(Number);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+// Black or white, whichever has the higher contrast on `color`, using WCAG's
+// relative luminance. Contrast with black is (L + 0.05) / 0.05 and with white
+// 1.05 / (L + 0.05). With fixed white labels, 9 of the old treemap's 15
+// colours fell below 4.5:1.
+function readableTextOn(color) {
+    const [r, g, b] = withAlpha(color, 1).match(/[\d.]+/g).slice(0, 3).map(Number)
+        .map(c => { c /= 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; });
+    const L = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    return (L + 0.05) / 0.05 >= 1.05 / (L + 0.05) ? '#000' : '#fff';
+}
+
+// Categories that are not wrappers — tags, plain taxable accounts. No red or
+// green, and none of the wrapper hues, so colour never implies a gain, a loss
+// or a particular account type.
+const CATEGORY_COLORS = ['#0dcaf0', '#ffc107', '#d63384', '#8c6a4f',
+                         '#74b9ff', '#a29bfe', '#495057', '#adb5bd'];
+
+function wrapperOf(name) {
+    if (!name) return null;
+    if (name.trim().toUpperCase() === 'PPK') return 'ppk';
+    return { 'IKE': 'ike', 'IKE-M': 'ikem', 'IKZE': 'ikze' }[getRetirementType(name)] || null;
+}
+
+// A colour per name, in order. Wrappers get their identity colour; everything
+// else takes the palette in turn, so the palette never skips a slot.
+function categoryColors(names) {
+    let next = 0;
+    return names.map(name => {
+        const wrapper = wrapperOf(name);
+        return wrapper ? cssColor(`--pt-${wrapper}`) : CATEGORY_COLORS[next++ % CATEGORY_COLORS.length];
+    });
+}
+
+// Chart.js text and gridline colours. Its built-in #666 measured 2.69:1 on the
+// dark background, a WCAG AA fail. Chart.js resolves these when a chart is
+// created and does not re-read them on update(), so a theme switch announces
+// itself with a 'themechange' event and each page redraws its charts.
+function applyChartTheme() {
+    if (!window.Chart) return;
+    Chart.defaults.color = cssColor('--bs-secondary-color');
+    Chart.defaults.borderColor = cssColor('--bs-border-color-translucent');
+}
+
 function toggleTheme() {
     const html = document.documentElement;
     const next = html.getAttribute('data-bs-theme') === 'dark' ? 'light' : 'dark';
     html.setAttribute('data-bs-theme', next);
     localStorage.setItem('theme', next);
     syncThemeButton();
+    applyChartTheme();
+    window.dispatchEvent(new Event('themechange'));
 }
 
 // Apply the saved theme and label the button before any page script runs.
@@ -69,6 +146,8 @@ function toggleTheme() {
     // here means every page gets a correct label without repeating the logic —
     // the Add Data page had no copy of it and showed "Dark" while in dark mode.
     syncThemeButton();
+    // Before any page script creates a chart, so every chart starts themed.
+    applyChartTheme();
 })();
 
 // The last event date is not proof of export coverage; show both explicitly.

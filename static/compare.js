@@ -5,7 +5,7 @@
 
 // Amount + percentage change label. The dashboard's formatPctChange() renders
 // percentage only — different output, so they stay separate.
-function formatChange(current, previous) {
+function formatChange(current, previous, polarity = 1) {
     const diff = current - previous;
     const sign = diff >= 0 ? '+' : '';
     let pct = '';
@@ -13,8 +13,7 @@ function formatChange(current, previous) {
         const p = (diff / Math.abs(previous)) * 100;
         pct = ` (${p >= 0 ? '+' : ''}${p.toFixed(1)}%)`;
     }
-    const cls = diff >= 0 ? 'text-positive' : 'text-negative';
-    return `<span class="${cls}">${sign}${formatPLN(diff)}${pct}</span>`;
+    return `<span class="${changeClass(diff, polarity)}">${sign}${formatPLN(diff)}${pct}</span>`;
 }
 
 // ── Compare State ───────────────────────────────────
@@ -61,6 +60,7 @@ async function loadCompare(idA, idB) {
         app.appendChild(template.content.cloneNode(true));
 
         initSelectors();
+        window.addEventListener('themechange', redrawChartsForTheme);
     }
 
     renderCards();
@@ -100,10 +100,12 @@ function renderCards() {
     const qB = compareData.snapshot_b.quarter;
 
     const items = [
-        { label: 'Portfolio', key: 'portfolio' },
-        { label: 'Cash', key: 'cash' },
-        { label: 'Mortgage', key: 'mortgage' },
-        { label: 'Net Worth', key: 'net_worth' },
+        // Polarity as on the dashboard: paying down the mortgage is green
+        // here, matching its bar in the Net Worth Bridge below.
+        { label: 'Portfolio', key: 'portfolio', polarity: 1 },
+        { label: 'Cash', key: 'cash', polarity: 0 },
+        { label: 'Mortgage', key: 'mortgage', polarity: -1 },
+        { label: 'Net Worth', key: 'net_worth', polarity: 1 },
     ];
 
     container.innerHTML = items.map(item => {
@@ -115,7 +117,7 @@ function renderCards() {
                     <div class="card-label">${item.label}</div>
                     <div class="card-detail">${qA}: ${formatPLN(valA)}</div>
                     <div class="card-detail">${qB}: ${formatPLN(valB)}</div>
-                    <div class="card-change">${formatChange(valB, valA)}</div>
+                    <div class="card-change">${formatChange(valB, valA, item.polarity)}</div>
                 </div>
             </div>
         </div>`;
@@ -173,12 +175,16 @@ function sortDiffGroups(groups) {
         } else if (sortCol === 'account') {
             cmp = a.account.localeCompare(b.account) || a.tags.localeCompare(b.tags);
         } else if (sortCol === 'valA') {
-            cmp = b.valA - a.valA;
+            cmp = a.valA - b.valA;
         } else if (sortCol === 'valB') {
-            cmp = b.valB - a.valB;
+            cmp = a.valB - b.valB;
         } else if (sortCol === 'change') {
-            cmp = Math.abs(b.change) - Math.abs(a.change);
+            cmp = Math.abs(a.change) - Math.abs(b.change);
         }
+        // Every branch above yields ascending order; direction is applied here
+        // and nowhere else. The numeric branches used to compare b to a, so
+        // this line reversed them a second time and the ▼ (largest first)
+        // view listed the smallest movers first.
         return sortAsc ? cmp : -cmp;
     });
 }
@@ -337,6 +343,13 @@ function buildTagDeltas() {
     return deltas;
 }
 
+// Charts take their colours when created; see applyChartTheme in common.js.
+function redrawChartsForTheme() {
+    if (!compareData) return;
+    renderTagDeltaChart();
+    renderWaterfallChart();
+}
+
 function renderTagDeltaChart() {
     const canvas = document.getElementById('tag-delta-chart');
     if (!canvas) return;
@@ -358,8 +371,8 @@ function renderTagDeltaChart() {
                 label: 'Change (PLN)',
                 data: data.map(d => d.change),
                 backgroundColor: data.map(d =>
-                    d.change >= 0 ? 'rgba(25, 135, 84, 0.7)' : 'rgba(220, 53, 69, 0.7)'),
-                borderColor: data.map(d => d.change >= 0 ? '#198754' : '#dc3545'),
+                    withAlpha(cssColor(d.change >= 0 ? '--pt-good' : '--pt-bad'), 0.7)),
+                borderColor: data.map(d => cssColor(d.change >= 0 ? '--pt-good' : '--pt-bad')),
                 borderWidth: 1,
             }],
         },
@@ -477,13 +490,15 @@ function renderWaterfallChart() {
                 data: stops.map(s => s.range),  // floating bars: [start, end]
                 backgroundColor: stops.map(s => {
                     if (s.type === 'total') return 'rgba(13, 110, 253, 0.7)';
-                    if (s.type === 'positive') return 'rgba(25, 135, 84, 0.7)';
-                    return 'rgba(220, 53, 69, 0.7)';
+                    // Each step is coloured by its effect on net worth, the
+                    // usual waterfall convention.
+                    if (s.type === 'positive') return withAlpha(cssColor('--pt-good'), 0.7);
+                    return withAlpha(cssColor('--pt-bad'), 0.7);
                 }),
                 borderColor: stops.map(s => {
                     if (s.type === 'total') return '#0d6efd';
-                    if (s.type === 'positive') return '#198754';
-                    return '#dc3545';
+                    if (s.type === 'positive') return cssColor('--pt-good');
+                    return cssColor('--pt-bad');
                 }),
                 borderWidth: 1,
             }],
