@@ -53,12 +53,41 @@ function syncThemeButton() {
     }
 }
 
+// A CSS custom property as resolved for the current theme. Lets canvas
+// drawing — which CSS cannot reach — use the same tokens as the markup,
+// e.g. cssColor('--pt-bad').
+function cssColor(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+// The same colour at a given opacity, for chart fills. Accepts the #rrggbb and
+// rgb()/rgba() forms Bootstrap's tokens resolve to.
+function withAlpha(color, alpha) {
+    const hex = color.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+    const [r, g, b] = hex
+        ? hex.slice(1).map(h => parseInt(h, 16))
+        : color.match(/[\d.]+/g).slice(0, 3).map(Number);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+// Chart.js text and gridline colours. Its built-in #666 measured 2.69:1 on the
+// dark background, a WCAG AA fail. Chart.js resolves these when a chart is
+// created and does not re-read them on update(), so a theme switch announces
+// itself with a 'themechange' event and each page redraws its charts.
+function applyChartTheme() {
+    if (!window.Chart) return;
+    Chart.defaults.color = cssColor('--bs-secondary-color');
+    Chart.defaults.borderColor = cssColor('--bs-border-color-translucent');
+}
+
 function toggleTheme() {
     const html = document.documentElement;
     const next = html.getAttribute('data-bs-theme') === 'dark' ? 'light' : 'dark';
     html.setAttribute('data-bs-theme', next);
     localStorage.setItem('theme', next);
     syncThemeButton();
+    applyChartTheme();
+    window.dispatchEvent(new Event('themechange'));
 }
 
 // Apply the saved theme and label the button before any page script runs.
@@ -69,6 +98,8 @@ function toggleTheme() {
     // here means every page gets a correct label without repeating the logic —
     // the Add Data page had no copy of it and showed "Dark" while in dark mode.
     syncThemeButton();
+    // Before any page script creates a chart, so every chart starts themed.
+    applyChartTheme();
 })();
 
 // The last event date is not proof of export coverage; show both explicitly.

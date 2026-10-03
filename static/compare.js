@@ -61,6 +61,7 @@ async function loadCompare(idA, idB) {
         app.appendChild(template.content.cloneNode(true));
 
         initSelectors();
+        window.addEventListener('themechange', redrawChartsForTheme);
     }
 
     renderCards();
@@ -339,6 +340,13 @@ function buildTagDeltas() {
     // Sort by absolute change descending — biggest movers first (top of horizontal chart)
     deltas.sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
     return deltas;
+}
+
+// Charts take their colours when created; see applyChartTheme in common.js.
+function redrawChartsForTheme() {
+    if (!compareData) return;
+    renderTagDeltaChart();
+    renderWaterfallChart();
 }
 
 function renderTagDeltaChart() {

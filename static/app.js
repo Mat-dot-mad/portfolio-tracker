@@ -52,6 +52,22 @@ async function loadDashboard() {
     initBreakdownTable();
     renderTreemap('chartTags', dashboardData.by_tags, 'Tags');
     renderTreemap('chartAccount', dashboardData.by_account, 'Account');
+    window.addEventListener('themechange', redrawChartsForTheme);
+}
+
+// Charts take their colours when created; see applyChartTheme in common.js.
+// The timeline and treemaps are otherwise drawn once and never destroyed, so
+// destroy them here before redrawing onto the same canvases.
+function redrawChartsForTheme() {
+    if (!dashboardData || !document.getElementById('chartTimeline')) return;
+    for (const id of ['chartTimeline', 'chartTags', 'chartAccount']) {
+        const existing = Chart.getChart(id);
+        if (existing) existing.destroy();
+    }
+    renderTimelineChart();
+    renderMoneyInChart();      // destroys its own previous instance
+    renderTreemap('chartTags', dashboardData.by_tags, 'Tags');
+    renderTreemap('chartAccount', dashboardData.by_account, 'Account');
 }
 
 // ── Summary Cards with QoQ change ───────────────────

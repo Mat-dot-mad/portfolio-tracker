@@ -1,0 +1,27 @@
+/* Styles shared by every page. Page-specific styles stay in each template.
+
+   Design tokens, in two layers. Bootstrap's variables (--bs-success, …) are
+   the primitive layer: raw colours. The --pt-* variables below are the
+   semantic layer: they name a meaning ("good for you") rather than a hue, and
+   each theme maps the meaning to whichever primitive is legible there.
+
+   Why not use Bootstrap's own --bs-success-text-emphasis everywhere? In light
+   mode it is #0a3622, a near-black green that no longer reads as "green" at
+   small sizes. So light mode keeps the standard hues (4.53:1 on white, a pass)
+   and dark mode switches to Bootstrap's dark-mode text colours, which measure
+   6.6:1 and 6.1:1 on the dark card background where the standard hues
+   measured 3.4:1 and failed WCAG AA's 4.5:1 for normal-size text. */
+
+:root,
+[data-bs-theme="light"] {
+    --pt-good: var(--bs-success);
+    --pt-bad: var(--bs-danger);
+}
+
+[data-bs-theme="dark"] {
+    --pt-good: var(--bs-success-text-emphasis);
+    --pt-bad: var(--bs-danger-text-emphasis);
+}
+
+.text-positive { color: var(--pt-good); }
+.text-negative { color: var(--pt-bad); }

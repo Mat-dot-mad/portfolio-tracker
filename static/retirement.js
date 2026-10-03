@@ -457,13 +457,16 @@ const milestonesPlugin = {
             return i === -1 ? null : scales.x.getPixelForValue(i);
         };
 
+        // Read per draw, so a redraw after a theme switch picks up the
+        // dark-mode red; canvas text cannot use the .text-negative class.
+        const bad = cssColor('--pt-bad');
         const from = xFor(opts.retireAge);
         const to = xFor(Math.min(opts.ikeAge, opts.ppkAge));
         if (from !== null && to !== null && to > from) {
             ctx.save();
-            ctx.fillStyle = 'rgba(220, 53, 69, 0.10)';
+            ctx.fillStyle = withAlpha(bad, 0.10);
             ctx.fillRect(from, chartArea.top, to - from, chartArea.bottom - chartArea.top);
-            ctx.fillStyle = 'rgba(220, 53, 69, 0.85)';
+            ctx.fillStyle = bad;
             ctx.font = '11px sans-serif';
             ctx.fillText('bridge', from + 4, chartArea.top + 13);
             ctx.restore();
@@ -475,13 +478,13 @@ const milestonesPlugin = {
             const sx = xFor(opts.shortfallAge);
             if (sx !== null) {
                 ctx.save();
-                ctx.strokeStyle = 'rgba(220, 53, 69, 0.9)';
+                ctx.strokeStyle = bad;
                 ctx.lineWidth = 2;
                 ctx.beginPath();
                 ctx.moveTo(sx, chartArea.top);
                 ctx.lineTo(sx, chartArea.bottom);
                 ctx.stroke();
-                ctx.fillStyle = 'rgba(220, 53, 69, 0.95)';
+                ctx.fillStyle = bad;
                 ctx.font = 'bold 11px sans-serif';
                 ctx.fillText(`median first shortfall: ${opts.shortfallAge}`, sx + 5, chartArea.top + 28);
                 ctx.restore();
@@ -941,6 +944,9 @@ async function loadRetirement() {
     markFormSaved();
     renderChart(data);          // sets chartUsesLogScale, read by renderResults
     renderResults(data);
+    // loadRetirement can run again (baseline update, reset); registering the
+    // same function twice is a no-op, so redraws cannot stack.
+    window.addEventListener('themechange', redrawChartsForTheme);
 
     await refreshScenarios();
     renderScenarioComparison();
@@ -952,6 +958,11 @@ async function loadRetirement() {
             el.addEventListener('change', scheduleUpdate);
         }
     }
+}
+
+// Charts take their colours when created; see applyChartTheme in common.js.
+function redrawChartsForTheme() {
+    if (planData && document.getElementById('retirement-chart')) renderChart(planData);
 }
 
 // Covers closing the tab, reloading and the nav links. Browsers show their own

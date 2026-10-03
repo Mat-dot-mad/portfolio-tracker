@@ -23,6 +23,9 @@ function nextQuarter(q) {
 let timeline = null;            // History from /api/dashboard
 let historicalStats = null;     // Computed once on load
 let forecastChart = null;       // Chart.js instance, destroyed before re-render
+// Kept so a theme switch can redraw the same projection. Calling render()
+// instead would re-run the Monte Carlo simulation and change the numbers.
+let lastForecast = null;
 
 // ── Computation Engine ──────────────────────────────
 
@@ -190,6 +193,12 @@ function render() {
 
     updateSummaryCards(summary, assumptions);
     renderForecastChart(summary, assumptions);
+    lastForecast = { summary, assumptions };
+}
+
+// Charts take their colours when created; see applyChartTheme in common.js.
+function redrawChartsForTheme() {
+    if (lastForecast) renderForecastChart(lastForecast.summary, lastForecast.assumptions);
 }
 
 function updateSummaryCards(summary, assumptions) {
@@ -419,6 +428,7 @@ async function loadForecast() {
     });
 
     render();
+    window.addEventListener('themechange', redrawChartsForTheme);
 }
 
 loadForecast();
