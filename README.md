@@ -292,6 +292,16 @@ sudo systemctl daemon-reload
 sudo systemctl restart portfolio
 ```
 
+`ExecStart` ends with `--no-control-socket`. Since 25.1, gunicorn opens a
+management socket for its `gunicornc` tool by default, at
+`$XDG_RUNTIME_DIR/gunicorn.ctl` or else `~/.gunicorn/gunicorn.ctl`. A service
+has no `XDG_RUNTIME_DIR`, and the `portfolio` user's home is `/opt/portfolio`,
+which `ProtectSystem=strict` keeps read-only, so without the flag every start
+logs `Control server error: [Errno 30] Read-only file system`. The app is
+managed with `systemctl`, so the socket is not needed. Keep the flag if the
+unit is ever recreated; to use `gunicornc` instead, add
+`RuntimeDirectory=portfolio` and `--control-socket /run/portfolio/gunicorn.ctl`.
+
 ## Network access
 
 UFW allows traffic only on the `tailscale0` interface plus SSH. The dashboard is
